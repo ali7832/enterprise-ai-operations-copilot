@@ -19,6 +19,8 @@ create table if not exists copilot_runs (
   workflow_mode text not null,
   runbook_count integer not null,
   duration_seconds numeric(10,4) not null,
+  cache_hit boolean not null default false,
+  execution_metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -31,3 +33,11 @@ create table if not exists runbook_feedback (
   created_at timestamptz not null default now()
 );
 
+create table if not exists incident_timeline_events (
+  event_id bigserial primary key,
+  incident_id text not null,
+  event_type text not null,
+  actor text not null,
+  summary text not null,
+  created_at timestamptz not null
+);
