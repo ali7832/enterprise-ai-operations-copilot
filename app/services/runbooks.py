@@ -10,6 +10,9 @@ class RunbookSearchService:
         self.max_results = max_results
 
     def search(self, incident: IncidentRecord) -> list[RunbookDocument]:
+        search_repository = getattr(self.repository, "search", None)
+        if callable(search_repository):
+            return search_repository(incident, self.max_results)
         incident_terms = self._extract_terms(incident)
         scored: list[tuple[int, RunbookDocument]] = []
         for runbook in self.repository.list_all():
@@ -37,4 +40,3 @@ class RunbookSearchService:
     def _runbook_terms(self, runbook: RunbookDocument) -> set[str]:
         raw = " ".join([runbook.title, runbook.service_name, runbook.summary, " ".join(runbook.keywords)]).lower()
         return {token.strip(".,:;!?") for token in raw.split() if token}
-
