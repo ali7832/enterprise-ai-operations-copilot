@@ -1,0 +1,11 @@
+{
+  "title": "Payments API latency causing checkout timeouts",
+  "description": "Checkout requests are timing out for multiple enterprise accounts after the last production release.",
+  "service_name": "payments-api",
+  "environment": "production",
+  "reporter": "nora.lee",
+  "impact_summary": "Checkout success rate is dropping and some customers cannot complete payment flows.",
+  "affected_regions": ["us-east-1", "eu-west-1"],
+  "tags": ["payments", "latency", "checkout", "enterprise"]
+}
+

@@ -1,2 +1,17 @@
 .venv/
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+coverage.xml
+htmlcov/
+opensearch-data/
+postgres-data/
+redis-data/
+

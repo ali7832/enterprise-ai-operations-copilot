@@ -1,0 +1,45 @@
+{
+  "title": "Enterprise AI Operations Copilot",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Incident Intake Volume",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "incident_intake_requests_total",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "title": "Copilot Triage Requests",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "copilot_triage_requests_total",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "title": "Copilot Triage Duration",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "copilot_triage_duration_seconds_sum / copilot_triage_duration_seconds_count",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 8 }
+    }
+  ]
+}
+

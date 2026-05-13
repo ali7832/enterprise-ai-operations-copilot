@@ -1,0 +1,59 @@
+[
+  {
+    "runbook_id": "rb-payments-latency",
+    "title": "Payments API Latency Triage",
+    "service_name": "payments-api",
+    "severity_levels": ["SEV1", "SEV2"],
+    "keywords": ["payments", "latency", "timeouts", "gateway", "checkout"],
+    "summary": "Use this runbook when payments latency rises or checkout timeouts increase across production traffic.",
+    "immediate_actions": [
+      "Confirm recent deploys and rollback if a regression is suspected.",
+      "Check database connection saturation and queue backlog.",
+      "Rate-limit non-critical background jobs if customer flows are impacted."
+    ],
+    "escalation_targets": ["Payments Service Owner", "Database On-Call"]
+  },
+  {
+    "runbook_id": "rb-order-sync-backlog",
+    "title": "Order Sync Backlog Containment",
+    "service_name": "order-sync",
+    "severity_levels": ["SEV2", "SEV3"],
+    "keywords": ["backlog", "sync", "orders", "queue", "delayed"],
+    "summary": "Use this runbook for delayed order propagation, queue backlog, or partner integration slowness.",
+    "immediate_actions": [
+      "Inspect queue depth and dead-letter counts.",
+      "Pause non-critical replay workloads.",
+      "Notify downstream integration owners about increased lag."
+    ],
+    "escalation_targets": ["Order Platform Lead", "Partner Integrations Owner"]
+  },
+  {
+    "runbook_id": "rb-auth-production-outage",
+    "title": "Authentication Service Production Outage",
+    "service_name": "identity-service",
+    "severity_levels": ["SEV1"],
+    "keywords": ["auth", "login", "production down", "identity", "all customers"],
+    "summary": "Use this runbook when login failures affect broad customer traffic or the identity tier is unavailable.",
+    "immediate_actions": [
+      "Confirm the blast radius across login, token refresh, and admin flows.",
+      "Fail over to the standby identity cluster if health checks fail.",
+      "Engage incident commander and customer communications lead."
+    ],
+    "escalation_targets": ["Identity On-Call", "Incident Commander", "Customer Communications Lead"]
+  },
+  {
+    "runbook_id": "rb-inventory-search-degradation",
+    "title": "Inventory Search Degradation",
+    "service_name": "inventory-search",
+    "severity_levels": ["SEV2", "SEV3"],
+    "keywords": ["inventory", "search", "degraded", "opensearch", "stale results"],
+    "summary": "Use this runbook when search results become stale, incomplete, or significantly slower.",
+    "immediate_actions": [
+      "Check indexing lag and failed ingestion jobs.",
+      "Verify search cluster health and shard availability.",
+      "Re-route read traffic to the warm standby search cluster if required."
+    ],
+    "escalation_targets": ["Search Platform Owner", "Catalog Data Pipeline Owner"]
+  }
+]
+
