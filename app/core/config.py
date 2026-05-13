@@ -14,6 +14,12 @@ class Settings:
     postgres_dsn: str = "postgresql://copilot:copilot@localhost:5432/copilot"
     redis_url: str = "redis://localhost:6379/0"
     opensearch_url: str = "http://localhost:9200"
+    use_postgres_persistence: bool = False
+    use_redis_cache: bool = False
+    use_opensearch_runbooks: bool = False
+    workflow_cache_ttl_seconds: int = 900
+    opensearch_runbook_index: str = "runbooks"
+    workflow_runs_path: str = "fixtures/workflow_runs.jsonl"
     runbook_fixture_path: str = "fixtures/runbooks.json"
     incident_fixture_path: str = "fixtures/sample_incident.json"
     max_runbook_results: int = 3
@@ -35,6 +41,12 @@ class Settings:
             postgres_dsn=os.getenv("POSTGRES_DSN", cls.postgres_dsn),
             redis_url=os.getenv("REDIS_URL", cls.redis_url),
             opensearch_url=os.getenv("OPENSEARCH_URL", cls.opensearch_url),
+            use_postgres_persistence=os.getenv("USE_POSTGRES_PERSISTENCE", "false").lower() == "true",
+            use_redis_cache=os.getenv("USE_REDIS_CACHE", "false").lower() == "true",
+            use_opensearch_runbooks=os.getenv("USE_OPENSEARCH_RUNBOOKS", "false").lower() == "true",
+            workflow_cache_ttl_seconds=int(os.getenv("WORKFLOW_CACHE_TTL_SECONDS", cls.workflow_cache_ttl_seconds)),
+            opensearch_runbook_index=os.getenv("OPENSEARCH_RUNBOOK_INDEX", cls.opensearch_runbook_index),
+            workflow_runs_path=os.getenv("WORKFLOW_RUNS_PATH", cls.workflow_runs_path),
             runbook_fixture_path=os.getenv("RUNBOOK_FIXTURE_PATH", cls.runbook_fixture_path),
             incident_fixture_path=os.getenv("INCIDENT_FIXTURE_PATH", cls.incident_fixture_path),
             max_runbook_results=int(os.getenv("MAX_RUNBOOK_RESULTS", cls.max_runbook_results)),
@@ -50,3 +62,14 @@ class Settings:
     def fixture_path(self, relative_path: str) -> Path:
         return Path(relative_path)
 
+    @property
+    def storage_backend(self) -> str:
+        return "postgres" if self.use_postgres_persistence else "memory"
+
+    @property
+    def runbook_backend(self) -> str:
+        return "opensearch" if self.use_opensearch_runbooks else "fixtures"
+
+    @property
+    def cache_backend(self) -> str:
+        return "redis" if self.use_redis_cache else "disabled"
