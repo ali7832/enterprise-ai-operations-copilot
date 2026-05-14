@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.observability.metrics import metrics
 from app.repositories.base import IncidentRepository, RunbookRepository, TimelineRepository
 from app.schemas import (
+    AssistantRequest,
+    AssistantResponse,
     CopilotResponse,
     DependencyResponse,
     EnrichedContextResponse,
@@ -17,6 +19,7 @@ from app.schemas import (
     StakeholderUpdateResponse,
     TimelineEventResponse,
 )
+from app.services.assistant import CopilotAssistantService
 from app.services.intake import IncidentIntakeService
 from app.services.workflow import CopilotWorkflowService
 
@@ -24,6 +27,7 @@ from app.services.workflow import CopilotWorkflowService
 def build_router(
     intake_service: IncidentIntakeService,
     workflow_service: CopilotWorkflowService,
+    assistant_service: CopilotAssistantService,
     incident_repository: IncidentRepository,
     timeline_repository: TimelineRepository,
     runbook_repository: RunbookRepository,
@@ -112,6 +116,30 @@ def build_router(
                 for update in result.stakeholder_updates
             ],
             execution_metadata={k: str(v) for k, v in result.execution_metadata.items()},
+        )
+
+    @router.post("/api/v1/copilot/assistant", response_model=AssistantResponse)
+    def assist_operator(request: AssistantRequest) -> AssistantResponse:
+        reply = assistant_service.respond(
+            messages=[message.model_dump() for message in request.messages],
+            incident_context=request.incident_context,
+            triage_context=request.triage_context,
+            provider_label=request.provider_label,
+            api_base_url=request.api_base_url,
+            api_key=request.api_key,
+            model=request.model,
+            system_prompt=request.system_prompt,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+        metrics.increment("copilot_assistant_requests_total")
+        return AssistantResponse(
+            answer=reply.answer,
+            provider=reply.provider,
+            model=reply.model,
+            used_live_model=reply.used_live_model,
+            request_id=reply.request_id,
+            warning=reply.warning,
         )
 
     @router.get("/api/v1/incidents", response_model=IncidentListResponse)
