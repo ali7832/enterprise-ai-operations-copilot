@@ -1,17 +1,17 @@
 # Enterprise AI Operations Copilot
 
-Private, interview-focused enterprise application inspired by large-account operations environments. This build is designed to feel like a real internal AI product for enterprise teams rather than a generic portfolio demo.
+Private, interview-focused enterprise application inspired by large-account operations environments. The current frontend direction presents the product as a premium SaaS-style enterprise response platform rather than an internal operator console.
 
 ## What This System Does
 
 Enterprise AI Operations Copilot helps teams:
 
-- describe an incident or business issue in plain language
-- generate structured AI-assisted triage guidance
-- identify likely owners and related dependencies
+- describe an issue in plain language
+- generate a structured response brief
+- identify likely owners and likely solution paths
 - produce next-step recommendations that are easy to act on
-- draft stakeholder-facing updates for leadership and support teams
-- review recent incident history and timeline context from one workspace
+- draft stakeholder-facing updates for leadership and customer-facing teams
+- continue the same issue flow through follow-up AI assistance
 
 ## Stack
 
@@ -37,16 +37,19 @@ npm install
 npm run dev
 ```
 
-By default the frontend talks to the backend on the same origin. If you run the frontend separately, set the backend URL in the API Base field inside the UI.
+## Main Product Flow
 
-## Main User Flow
+- the user describes the issue in plain language
+- the triage workflow creates structured guidance, likely owners, and recommended actions
+- the assistant route can turn that context into a richer response brief and follow-up guidance
+- the workspace keeps communication-ready output and issue history visible in one place
 
-- user describes an issue in the workspace
-- the system produces triage guidance, likely owners, and related dependency context
-- the workspace surfaces recommended next actions and helpful runbook guidance
-- stakeholder-ready messaging can be copied directly from the same flow
-- recent incidents and timeline context remain visible for follow-up
+## Frontend Direction
 
-## Product Direction
+The current frontend is designed to feel like a real end-user AI SaaS product:
 
-The current frontend is intentionally simpler and more user-facing than the earlier operator-console direction. It is meant to feel like an AI help product that enterprise teams can actually understand and use during fast-moving issue response.
+- premium landing-page presentation first
+- product value explained before the workspace appears
+- no developer-facing controls in the main user journey
+- outcome-based AI messaging instead of infrastructure messaging
+- the actual issue workspace lower on the page, after the product story is clear
