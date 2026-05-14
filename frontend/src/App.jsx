@@ -1,18 +1,25 @@
-import React, { startTransition, useEffect, useMemo, useState } from "react";
+import React, { startTransition, useDeferredValue, useEffect, useState } from "react";
 import {
   demoIncident,
-  demoSnapshot,
   demoTriage,
   getApiBase,
+  getAssistantConfig,
   loadHealth,
   loadIncidents,
   loadTimeline,
+  runAssistant,
   runTriage,
-  setApiBase
+  setApiBase,
+  setAssistantConfig
 } from "./api";
 import { demoPayload } from "./demoData";
 
-const STACK_BADGES = ["FastAPI", "LangGraph", "Postgres", "Redis", "OpenSearch", "Grafana"];
+const QUICK_PROMPTS = [
+  "Summarize the incident for the incident commander.",
+  "Draft a customer-safe support update.",
+  "What should we verify before rolling back?",
+  "Give me a 15-minute executive checkpoint."
+];
 
 function buildInitialForm() {
   return {
@@ -58,6 +65,28 @@ function toIncidentFromPayload(form) {
   };
 }
 
+function makeTriageContext(result) {
+  return {
+    incident_id: result?.incident_id || demoTriage.incident_id,
+    severity: result?.severity || demoTriage.severity,
+    incident_summary: result?.incident_summary || demoTriage.incident_summary,
+    likely_owners: result?.enriched_context?.likely_owners || demoTriage.enriched_context.likely_owners,
+    blast_radius: result?.enriched_context?.blast_radius || demoTriage.enriched_context.blast_radius,
+    action_plan: result?.action_plan || demoTriage.action_plan,
+    leadership_update: result?.leadership_update || demoTriage.leadership_update
+  };
+}
+
+function buildSeedMessages(triageResult) {
+  const active = triageResult || demoTriage;
+  return [
+    {
+      role: "assistant",
+      content: `I am ready to help with ${active.incident_summary}`
+    }
+  ];
+}
+
 function formatTime(value) {
   if (!value) {
     return "now";
@@ -75,24 +104,36 @@ function formatTime(value) {
 }
 
 function severityClass(severity) {
-  return `severity-pill severity-${severity || "SEV2"}`;
+  return `severity severity-${(severity || "SEV2").toLowerCase()}`;
 }
 
-function HeroStat({ label, value }) {
+function MetricTile({ label, value, hint }) {
   return (
-    <article className="hero-stat">
+    <div className="metric-tile">
       <span>{label}</span>
       <strong>{value}</strong>
-    </article>
+      <small>{hint}</small>
+    </div>
   );
 }
 
-function FeatureCard({ eyebrow, title, text }) {
+function ActivityRow({ label, value, meta }) {
   return (
-    <article className="feature-card">
-      <p className="mini-label">{eyebrow}</p>
-      <h3>{title}</h3>
-      <p>{text}</p>
+    <div className="activity-row">
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <small>{meta}</small>
+    </div>
+  );
+}
+
+function MessageBubble({ role, content }) {
+  return (
+    <article className={`message-bubble message-${role}`}>
+      <span className="message-role">{role === "assistant" ? "Copilot" : "Operator"}</span>
+      <p>{content}</p>
     </article>
   );
 }
@@ -100,6 +141,8 @@ function FeatureCard({ eyebrow, title, text }) {
 function App() {
   const [apiBase, setApiBaseState] = useState(getApiBase());
   const [apiBaseInput, setApiBaseInput] = useState(getApiBase());
+  const [assistantConfig, setAssistantConfigState] = useState(getAssistantConfig());
+  const [configOpen, setConfigOpen] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [health, setHealth] = useState(null);
   const [incidents, setIncidents] = useState([]);
@@ -109,6 +152,16 @@ function App() {
   const [triageMode, setTriageMode] = useState("waiting");
   const [form, setForm] = useState(buildInitialForm);
   const [searchText, setSearchText] = useState("");
+  const [assistantMessages, setAssistantMessages] = useState(buildSeedMessages(demoTriage));
+  const [assistantInput, setAssistantInput] = useState("");
+  const [assistantStatus, setAssistantStatus] = useState("idle");
+  const [assistantMeta, setAssistantMeta] = useState({
+    provider: "Demo",
+    model: "demo-fallback",
+    warning: ""
+  });
+
+  const deferredSearch = useDeferredValue(searchText);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +170,8 @@ function App() {
       try {
         const nextHealth = await loadHealth();
         const nextIncidents = await loadIncidents();
-        const nextTimeline = await loadTimeline(nextIncidents[0]?.incident_id);
+        const nextSelected = nextIncidents[0]?.incident_id || null;
+        const nextTimeline = await loadTimeline(nextSelected);
 
         if (cancelled) {
           return;
@@ -127,20 +181,26 @@ function App() {
           setLiveMode(true);
           setHealth(nextHealth);
           setIncidents(nextIncidents);
-          setSelectedIncidentId(nextIncidents[0]?.incident_id || null);
+          setSelectedIncidentId(nextSelected);
           setTimeline(nextTimeline);
         });
       } catch {
         if (cancelled) {
           return;
         }
-        const snapshot = demoSnapshot();
         startTransition(() => {
-          setLiveMode(snapshot.liveMode);
-          setHealth(snapshot.health);
-          setIncidents(snapshot.incidents);
-          setSelectedIncidentId(snapshot.incidents[0]?.incident_id || null);
-          setTimeline(snapshot.timeline);
+          setLiveMode(false);
+          setHealth({
+            status: "demo",
+            backend_summary: {
+              storage: "memory",
+              runbooks: "fixtures",
+              cache: "disabled"
+            }
+          });
+          setIncidents([demoIncident]);
+          setSelectedIncidentId(demoIncident.incident_id);
+          setTimeline([]);
         });
       }
     }
@@ -154,55 +214,60 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateTimeline() {
+    async function refreshTimeline() {
       if (!selectedIncidentId || !liveMode) {
         return;
       }
-
       try {
-        const items = await loadTimeline(selectedIncidentId);
+        const nextTimeline = await loadTimeline(selectedIncidentId);
         if (!cancelled) {
-          setTimeline(items);
+          setTimeline(nextTimeline);
         }
       } catch {
         if (!cancelled) {
-          setTimeline(demoSnapshot().timeline);
+          setTimeline([]);
         }
       }
     }
 
-    hydrateTimeline();
+    refreshTimeline();
     return () => {
       cancelled = true;
     };
-  }, [selectedIncidentId, liveMode]);
+  }, [liveMode, selectedIncidentId]);
 
-  const filteredIncidents = useMemo(() => {
-    const query = searchText.trim().toLowerCase();
+  const filteredIncidents = incidents.filter((incident) => {
+    const query = deferredSearch.trim().toLowerCase();
     if (!query) {
-      return incidents;
+      return true;
     }
-
-    return incidents.filter((incident) =>
-      [incident.title, incident.service_name, incident.severity, incident.reporter, incident.impact_summary]
-        .join(" ")
-        .toLowerCase()
-        .includes(query)
-    );
-  }, [incidents, searchText]);
+    return [incident.title, incident.service_name, incident.reporter, incident.severity, incident.impact_summary]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
 
   const selectedIncident =
-    incidents.find((incident) => incident.incident_id === selectedIncidentId) || incidents[0] || demoIncident;
-
-  const activeResult = triageResult || demoTriage;
-  const likelyOwners = activeResult.enriched_context?.likely_owners || [];
-  const dependencies = activeResult.enriched_context?.dependencies || [];
-  const stakeholderUpdates = activeResult.stakeholder_updates || [];
-  const recentIncidents = filteredIncidents.length ? filteredIncidents : [demoIncident];
+    incidents.find((incident) => incident.incident_id === selectedIncidentId) ||
+    incidents[0] ||
+    demoIncident;
+  const activeTriage = triageResult || demoTriage;
+  const currentTriageContext = makeTriageContext(activeTriage);
+  const liveBadge = liveMode ? "Live stack" : "Demo fallback";
+  const runbookCount = activeTriage.runbooks?.length || 0;
+  const actionCount = activeTriage.action_plan?.length || 0;
+  const statusTone = liveMode ? "tone-live" : "tone-demo";
 
   function updateForm(event) {
     const { name, value } = event.target;
     setForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function updateAssistantConfig(event) {
+    const { name, value } = event.target;
+    const nextConfig = { ...assistantConfig, [name]: value };
+    setAssistantConfigState(nextConfig);
+    setAssistantConfig(nextConfig);
   }
 
   function applyApiBase() {
@@ -211,470 +276,465 @@ function App() {
     setApiBaseState(nextBase);
   }
 
-  function scrollToWorkspace() {
-    document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  async function handleCopy(text) {
-    if (!text) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {}
-  }
-
   async function handleTriageSubmit(event) {
     event.preventDefault();
     const payload = toPayload(form);
 
     try {
       const result = await runTriage(payload);
+      const nextIncident = toIncidentFromPayload(form);
       startTransition(() => {
         setTriageResult(result);
         setTriageMode("live");
         setLiveMode(true);
-        setIncidents((current) => [toIncidentFromPayload(form), ...current].slice(0, 12));
+        setIncidents((current) => [nextIncident, ...current].slice(0, 12));
+        setSelectedIncidentId(nextIncident.incident_id);
+        setAssistantMessages(buildSeedMessages(result));
+        setAssistantMeta({
+          provider: "Copilot",
+          model: "triage-workflow",
+          warning: ""
+        });
       });
     } catch {
       startTransition(() => {
         setTriageResult(demoTriage);
         setTriageMode("demo");
+        setAssistantMessages(buildSeedMessages(demoTriage));
+        setAssistantMeta({
+          provider: "Demo",
+          model: "demo-fallback",
+          warning: "The API was unavailable, so the workspace stayed in demo mode."
+        });
       });
     }
   }
 
+  async function submitAssistantPrompt(promptOverride) {
+    const prompt = (promptOverride || assistantInput).trim();
+    if (!prompt) {
+      return;
+    }
+
+    const nextMessages = [...assistantMessages, { role: "user", content: prompt }];
+    setAssistantMessages(nextMessages);
+    setAssistantInput("");
+    setAssistantStatus("loading");
+
+    try {
+      const reply = await runAssistant({
+        messages: nextMessages,
+        incidentContext: selectedIncident,
+        triageContext: currentTriageContext,
+        config: assistantConfig
+      });
+
+      startTransition(() => {
+        setAssistantMessages((current) => [...current, { role: "assistant", content: reply.answer }]);
+        setAssistantMeta({
+          provider: reply.provider,
+          model: reply.model,
+          warning: reply.warning || ""
+        });
+        setAssistantStatus(reply.used_live_model ? "live" : "demo");
+      });
+    } catch {
+      startTransition(() => {
+        setAssistantMessages((current) => [
+          ...current,
+          {
+            role: "assistant",
+            content:
+              "The model endpoint could not be reached from the current backend. The operator workspace is still available, and you can retry after setting a reachable API base and key."
+          }
+        ]);
+        setAssistantMeta({
+          provider: "Unavailable",
+          model: "n/a",
+          warning: "The live assistant route was unreachable."
+        });
+        setAssistantStatus("error");
+      });
+    }
+  }
+
+  function handleAssistantSubmit(event) {
+    event.preventDefault();
+    submitAssistantPrompt();
+  }
+
   return (
-    <div className="page-shell">
-      <header className="site-header">
-        <div className="brand-row">
-          <div className="brand-mark">
-            <span />
-            <span />
-            <span />
-          </div>
+    <div className="shell">
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark">EA</div>
           <div>
-            <p className="mini-label">AI-Assisted Enterprise Response System</p>
-            <strong>Enterprise AI Operations Copilot</strong>
+            <p>Enterprise AI Operations Copilot</p>
+            <span>Operator workspace for incidents, guidance, and stakeholder updates</span>
           </div>
         </div>
-
-        <nav className="site-nav">
-          <a href="#platform">Platform</a>
-          <a href="#workspace">Workspace</a>
-          <a href="#memory">Memory</a>
-        </nav>
-
-        <div className="header-actions">
-          <span className={`status-pill ${liveMode ? "status-live" : "status-demo"}`}>
-            {liveMode ? "Live backend" : "Demo mode"}
-          </span>
-          <button className="secondary-button" onClick={scrollToWorkspace} type="button">
-            Open Workspace
+        <div className="topbar-actions">
+          <button className="ghost-button" type="button" onClick={() => setConfigOpen((current) => !current)}>
+            Model routing
           </button>
+          <div className={`status-pill ${statusTone}`}>{liveBadge}</div>
         </div>
       </header>
 
-      <main className="page-main">
-        <section className="hero-section">
-          <div className="hero-copy">
-            <p className="mini-label">The AI platform for incident response teams</p>
-            <h1>Enterprise AI that helps teams triage faster, decide clearly, and communicate better.</h1>
-            <p className="hero-text">
-              A polished enterprise product for incident intake, AI-assisted analysis, operational
-              recommendations, and stakeholder-ready updates. Built to feel like real internal AI software,
-              not a portfolio demo.
-            </p>
-
-            <div className="hero-actions">
-              <button className="primary-button" onClick={scrollToWorkspace} type="button">
-                Run AI Analysis
-              </button>
-              <button className="secondary-button" onClick={applyApiBase} type="button">
-                Refresh Connection
-              </button>
-            </div>
-
-            <div className="hero-stats">
-              <HeroStat label="Tracked incidents" value={recentIncidents.length} />
-              <HeroStat label="Likely owners surfaced" value={likelyOwners.length || "0"} />
-              <HeroStat label="Stakeholder drafts" value={stakeholderUpdates.length || "0"} />
-              <HeroStat label="Backend mode" value={liveMode ? "Connected" : "Demo"} />
-            </div>
+      <section className="hero-grid">
+        <div className="hero-copy">
+          <p className="eyebrow">AI workspace for enterprise response teams</p>
+          <h1>Make the first fifteen minutes of every incident feel sharp and calm.</h1>
+          <p className="hero-text">
+            Intake the issue, generate a triage path, pull relevant runbooks, and collaborate with a model-backed
+            copilot from one clean command surface.
+          </p>
+          <div className="hero-actions">
+            <button className="primary-button" type="button" onClick={() => submitAssistantPrompt(QUICK_PROMPTS[0])}>
+              Ask for an incident summary
+            </button>
+            <button className="ghost-button" type="button" onClick={applyApiBase}>
+              Refresh backend route
+            </button>
           </div>
-
-          <div className="hero-preview">
-            <div className="preview-window">
-              <div className="preview-topbar">
-                <span>app.enterprise-ai.internal</span>
-                <strong>{health?.backend_summary?.storage || "demo"} stack</strong>
-              </div>
-
-              <div className="preview-grid">
-                <div className="preview-panel preview-panel-main">
-                  <p className="mini-label">AI Summary</p>
-                  <h3>{activeResult.incident_summary}</h3>
-                  <div className="preview-tags">
-                    {dependencies.slice(0, 3).map((item) => (
-                      <span key={`${item.dependency_name}-${item.criticality}`}>
-                        {item.dependency_name} • {item.criticality}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="preview-panel">
-                  <p className="mini-label">Owners</p>
-                  <ul className="clean-list">
-                    {likelyOwners.map((owner) => (
-                      <li key={owner}>{owner}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="preview-panel">
-                  <p className="mini-label">Leadership update</p>
-                  <p>{activeResult.leadership_update}</p>
-                </div>
-
-                <div className="preview-panel">
-                  <p className="mini-label">Response timeline</p>
-                  <div className="mini-timeline">
-                    {timeline.slice(0, 3).map((item, index) => (
-                      <div className="mini-timeline-item" key={`${item.event_type}-${index}`}>
-                        <strong>{item.event_type}</strong>
-                        <span>{item.actor}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+          <div className="hero-metrics">
+            <MetricTile label="Guided steps" value={actionCount} hint="Action plan items ready" />
+            <MetricTile label="Runbooks" value={runbookCount} hint="Context retrieved for this case" />
+            <MetricTile label="Owners" value={currentTriageContext.likely_owners.length} hint="Teams likely to engage" />
           </div>
-        </section>
+        </div>
 
-        <section className="stack-strip">
-          {STACK_BADGES.map((badge) => (
-            <span key={badge} className="stack-badge">
-              {badge}
-            </span>
-          ))}
-        </section>
-
-        <section id="platform" className="feature-section">
-          <FeatureCard
-            eyebrow="AI Understanding"
-            title="Incident input becomes structured operational context."
-            text="The system converts raw incident reports into a normalized record the platform can reason over."
-          />
-          <FeatureCard
-            eyebrow="AI Assistance"
-            title="Relevant runbooks, owners, and dependencies are surfaced instantly."
-            text="The product makes the AI contribution visible and useful, so operators can understand why the system is recommending a path."
-          />
-          <FeatureCard
-            eyebrow="Operator Control"
-            title="Humans review every action before it becomes communication."
-            text="The UI is designed for human-in-the-loop decision support, which is exactly the right story for AI and ML interviews."
-          />
-        </section>
-
-        <section id="workspace" className="workspace-section">
-          <div className="section-heading">
+        <div className="signal-board">
+          <div className="signal-head">
             <div>
-              <p className="mini-label">Workspace</p>
-              <h2>One workspace for incident brief, AI analysis, and action output.</h2>
+              <p className="eyebrow">Live response fabric</p>
+              <h2>{selectedIncident.title}</h2>
             </div>
-            <div className="connection-card">
-              <label className="field-stack">
-                <span>API Base</span>
-                <input
-                  type="text"
-                  value={apiBaseInput}
-                  onChange={(event) => setApiBaseInput(event.target.value)}
-                  placeholder="Leave blank to use the Vite proxy"
-                />
-              </label>
-              <button className="secondary-button" onClick={applyApiBase} type="button">
-                Apply Connection
-              </button>
+            <span className={severityClass(activeTriage.severity)}>{activeTriage.severity}</span>
+          </div>
+          <div className="signal-mesh" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="activity-stack">
+            <ActivityRow label="Affected capability" value={activeTriage.enriched_context.affected_capability} meta="Current blast surface" />
+            <ActivityRow label="Blast radius" value={activeTriage.enriched_context.blast_radius} meta="Propagation watch" />
+            <ActivityRow label="Response mode" value={triageMode === "live" ? "Workflow + live context" : "Interview-safe demo"} meta="Fallback-aware behavior" />
+            <ActivityRow label="Model route" value={assistantConfig.model || "demo-fallback"} meta={assistantConfig.providerLabel} />
+          </div>
+        </div>
+      </section>
+
+      <section className="workspace-grid">
+        <div className="panel panel-compose">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Incident intake</p>
+              <h3>Compose the operational record</h3>
+            </div>
+            <div className="micro-state">
+              <span>Storage</span>
+              <strong>{health?.backend_summary?.storage || "memory"}</strong>
             </div>
           </div>
 
-          <div className="workspace-panels">
-            <section className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 01</p>
-                  <h3>Incident Brief</h3>
-                </div>
-                <button className="secondary-button" onClick={() => setForm(buildInitialForm())} type="button">
-                  Load Example
-                </button>
+          <form className="incident-form" onSubmit={handleTriageSubmit}>
+            <label>
+              <span>Title</span>
+              <input name="title" value={form.title} onChange={updateForm} />
+            </label>
+            <label className="full-width">
+              <span>Description</span>
+              <textarea name="description" value={form.description} onChange={updateForm} rows={5} />
+            </label>
+            <div className="form-grid">
+              <label>
+                <span>Service</span>
+                <input name="service_name" value={form.service_name} onChange={updateForm} />
+              </label>
+              <label>
+                <span>Environment</span>
+                <input name="environment" value={form.environment} onChange={updateForm} />
+              </label>
+              <label>
+                <span>Reporter</span>
+                <input name="reporter" value={form.reporter} onChange={updateForm} />
+              </label>
+              <label>
+                <span>Severity</span>
+                <select name="severity" value={form.severity} onChange={updateForm}>
+                  <option value="SEV1">SEV1</option>
+                  <option value="SEV2">SEV2</option>
+                  <option value="SEV3">SEV3</option>
+                </select>
+              </label>
+            </div>
+            <label className="full-width">
+              <span>Impact summary</span>
+              <textarea name="impact_summary" value={form.impact_summary} onChange={updateForm} rows={3} />
+            </label>
+            <div className="form-grid">
+              <label>
+                <span>Affected regions</span>
+                <input name="affected_regions" value={form.affected_regions} onChange={updateForm} />
+              </label>
+              <label>
+                <span>Tags</span>
+                <input name="tags" value={form.tags} onChange={updateForm} />
+              </label>
+            </div>
+            <div className="compose-actions">
+              <button className="primary-button" type="submit">
+                Run AI triage
+              </button>
+              <div className="helper-note">
+                <strong>{triageMode === "live" ? "Live triage completed" : "Ready for demo flow"}</strong>
+                <span>The workspace preserves a clean fallback if the API is offline.</span>
               </div>
+            </div>
+          </form>
+        </div>
 
-              <form className="incident-form" onSubmit={handleTriageSubmit}>
-                <div className="field-grid">
-                  <label className="field-stack">
-                    <span>Title</span>
-                    <input name="title" value={form.title} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Service</span>
-                    <input name="service_name" value={form.service_name} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Environment</span>
-                    <input name="environment" value={form.environment} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Reporter</span>
-                    <input name="reporter" value={form.reporter} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Severity</span>
-                    <select name="severity" value={form.severity} onChange={updateForm}>
-                      <option value="SEV1">SEV1</option>
-                      <option value="SEV2">SEV2</option>
-                      <option value="SEV3">SEV3</option>
-                      <option value="SEV4">SEV4</option>
-                    </select>
-                  </label>
-                  <label className="field-stack">
-                    <span>Affected Regions</span>
-                    <input name="affected_regions" value={form.affected_regions} onChange={updateForm} required />
-                  </label>
-                </div>
+        <div className="panel panel-assistant">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Model-backed assistance</p>
+              <h3>Work with the copilot in plain language</h3>
+            </div>
+            <div className="assistant-badge">
+              <strong>{assistantMeta.provider}</strong>
+              <span>{assistantMeta.model}</span>
+            </div>
+          </div>
 
-                <label className="field-stack">
-                  <span>Impact Summary</span>
-                  <textarea
-                    name="impact_summary"
-                    rows="3"
-                    value={form.impact_summary}
-                    onChange={updateForm}
-                    required
-                  />
-                </label>
+          <div className="prompt-chips">
+            {QUICK_PROMPTS.map((prompt) => (
+              <button key={prompt} type="button" className="chip" onClick={() => submitAssistantPrompt(prompt)}>
+                {prompt}
+              </button>
+            ))}
+          </div>
 
-                <label className="field-stack">
-                  <span>Description</span>
-                  <textarea
-                    name="description"
-                    rows="4"
-                    value={form.description}
-                    onChange={updateForm}
-                    required
-                  />
-                </label>
+          <div className="chat-surface">
+            {assistantMessages.map((message, index) => (
+              <MessageBubble key={`${message.role}-${index}`} role={message.role} content={message.content} />
+            ))}
+          </div>
 
-                <label className="field-stack">
-                  <span>Tags</span>
-                  <input name="tags" value={form.tags} onChange={updateForm} required />
-                </label>
-
-                <div className="button-row">
-                  <button className="primary-button" type="submit">
-                    Run AI Analysis
-                  </button>
-                  <div className="run-state">
-                    <span>Status</span>
-                    <strong>{triageMode === "waiting" ? "Ready" : `${triageMode.toUpperCase()} result`}</strong>
-                  </div>
-                </div>
-              </form>
-            </section>
-
-            <section className="surface-card surface-highlight">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 02</p>
-                  <h3>AI Analysis</h3>
-                </div>
-                <span className={`status-pill ${liveMode ? "status-live" : "status-demo"}`}>
-                  {liveMode ? "Live backend" : "Demo mode"}
-                </span>
+          <form className="assistant-form" onSubmit={handleAssistantSubmit}>
+            <textarea
+              value={assistantInput}
+              onChange={(event) => setAssistantInput(event.target.value)}
+              placeholder="Ask for rollback guidance, customer messaging, owner alignment, or the next best checkpoint."
+              rows={3}
+            />
+            <div className="assistant-footer">
+              <div className="assistant-state">
+                <strong>
+                  {assistantStatus === "loading"
+                    ? "Thinking"
+                    : assistantStatus === "live"
+                      ? "Live model response"
+                      : assistantStatus === "error"
+                        ? "Model route unavailable"
+                        : "Ready"}
+                </strong>
+                <span>{assistantMeta.warning || "Works with any OpenAI-compatible endpoint, including OpenAI, OpenRouter, and local gateways."}</span>
               </div>
+              <button className="primary-button" type="submit">
+                Send prompt
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
 
-              <article className="analysis-card analysis-hero">
-                <p className="mini-label">AI Incident Summary</p>
-                <div className="analysis-headline">
-                  <span className={severityClass(activeResult.severity)}>{activeResult.severity}</span>
-                  <h4>{activeResult.incident_summary}</h4>
-                </div>
-              </article>
-
-              <div className="analysis-grid">
-                <article className="analysis-card">
-                  <p className="mini-label">AI Context</p>
-                  <h4>{activeResult.enriched_context?.affected_capability}</h4>
-                  <p>{activeResult.enriched_context?.blast_radius}</p>
-                </article>
-
-                <article className="analysis-card">
-                  <p className="mini-label">Likely Owners</p>
-                  <ul className="clean-list">
-                    {likelyOwners.map((owner) => (
-                      <li key={owner}>{owner}</li>
-                    ))}
-                  </ul>
-                </article>
+      <section className="detail-grid">
+        <div className="panel panel-dark">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Guided response</p>
+              <h3>Action plan and owners</h3>
+            </div>
+            <div className="micro-state">
+              <span>Likely owners</span>
+              <strong>{currentTriageContext.likely_owners.join(", ")}</strong>
+            </div>
+          </div>
+          <div className="two-column-list">
+            <div>
+              <h4>Action plan</h4>
+              <ol className="ordered-list">
+                {activeTriage.action_plan.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ol>
+            </div>
+            <div>
+              <h4>Stakeholder line</h4>
+              <p className="standout-copy">{activeTriage.leadership_update}</p>
+              <div className="tag-row">
+                {activeTriage.enriched_context.dependencies.map((dependency) => (
+                  <span key={dependency.dependency_name} className="dependency-tag">
+                    {dependency.dependency_name} · {dependency.criticality}
+                  </span>
+                ))}
               </div>
+            </div>
+          </div>
+        </div>
 
-              <article className="analysis-card">
-                <p className="mini-label">Suggested Next Steps</p>
-                <ul className="clean-list">
-                  {activeResult.action_plan?.map((item) => (
+        <div className="panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Knowledge retrieval</p>
+              <h3>Runbooks in view</h3>
+            </div>
+            <div className="micro-state">
+              <span>Runbook backend</span>
+              <strong>{health?.backend_summary?.runbooks || "fixtures"}</strong>
+            </div>
+          </div>
+          <div className="runbook-list">
+            {activeTriage.runbooks.map((runbook) => (
+              <article key={runbook.runbook_id} className="runbook-card">
+                <strong>{runbook.title}</strong>
+                <span>{runbook.summary}</span>
+                <ul>
+                  {runbook.immediate_actions.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Retrieved Dependencies</p>
-                <div className="dependency-tags">
-                  {dependencies.map((dependency) => (
-                    <span key={`${dependency.dependency_name}-${dependency.criticality}`} className="dependency-tag">
-                      {dependency.dependency_name} • {dependency.criticality}
-                    </span>
-                  ))}
-                </div>
-              </article>
-            </section>
-
-            <section className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 03</p>
-                  <h3>Action Center</h3>
-                </div>
-              </div>
-
-              <article className="analysis-card">
-                <p className="mini-label">Leadership Update</p>
-                <p>{activeResult.leadership_update}</p>
-                <button
-                  className="secondary-button button-inline"
-                  onClick={() => handleCopy(activeResult.leadership_update)}
-                  type="button"
-                >
-                  Copy update
-                </button>
-              </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Stakeholder Drafts</p>
-                <div className="stack-tight">
-                  {stakeholderUpdates.map((update) => (
-                    <div className="message-card" key={`${update.audience}-${update.delivery_channel}`}>
-                      <strong>
-                        {update.audience} • {update.delivery_channel}
-                      </strong>
-                      <p>{update.title}</p>
-                      <p>{update.body}</p>
-                    </div>
-                  ))}
-                </div>
-              </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Runbook Guidance</p>
-                <div className="stack-tight">
-                  {activeResult.runbooks?.map((runbook) => (
-                    <div className="message-card" key={runbook.runbook_id}>
-                      <strong>{runbook.title}</strong>
-                      <p>{runbook.summary}</p>
-                      <p>{runbook.immediate_actions?.join(" • ")}</p>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            </section>
+            ))}
           </div>
-        </section>
+        </div>
 
-        <section id="memory" className="memory-section">
-          <div className="memory-column">
-            <div className="section-heading compact">
-              <div>
-                <p className="mini-label">Incident Memory</p>
-                <h2>Review recent incidents and live response activity.</h2>
-              </div>
+        <div className="panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Communications</p>
+              <h3>Stakeholder updates</h3>
             </div>
+            <div className="micro-state">
+              <span>Escalations</span>
+              <strong>{activeTriage.escalation_targets.join(", ")}</strong>
+            </div>
+          </div>
+          <div className="update-list">
+            {activeTriage.stakeholder_updates.map((update) => (
+              <article key={`${update.audience}-${update.title}`} className="update-card">
+                <span>{update.audience}</span>
+                <strong>{update.title}</strong>
+                <p>{update.body}</p>
+              </article>
+            ))}
+          </div>
+        </div>
 
-            <label className="field-stack search-field">
-              <span>Search incidents</span>
-              <input
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search title, service, severity, or reporter"
-              />
-            </label>
-
-            <div className="incident-list">
-              {recentIncidents.map((incident) => (
-                <button
-                  key={incident.incident_id}
-                  className={`incident-item ${selectedIncidentId === incident.incident_id ? "selected" : ""}`}
-                  onClick={() => setSelectedIncidentId(incident.incident_id)}
-                  type="button"
-                >
+        <div className="panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Activity log</p>
+              <h3>Incident memory</h3>
+            </div>
+            <div className="micro-state">
+              <span>Selected</span>
+              <strong>{selectedIncident.severity}</strong>
+            </div>
+          </div>
+          <div className="search-row">
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search incident history"
+            />
+          </div>
+          <div className="incident-list">
+            {(filteredIncidents.length ? filteredIncidents : [demoIncident]).map((incident) => (
+              <button
+                key={incident.incident_id}
+                type="button"
+                className={`incident-row ${incident.incident_id === selectedIncidentId ? "incident-active" : ""}`}
+                onClick={() => setSelectedIncidentId(incident.incident_id)}
+              >
+                <div>
                   <strong>{incident.title}</strong>
-                  <span>
-                    <span className={severityClass(incident.severity)}>{incident.severity}</span> {incident.service_name}
-                  </span>
-                  <span>{formatTime(incident.created_at)}</span>
-                </button>
-              ))}
+                  <span>{incident.service_name}</span>
+                </div>
+                <small>{formatTime(incident.created_at)}</small>
+              </button>
+            ))}
+          </div>
+          <div className="timeline-list">
+            {(timeline.length ? timeline : []).map((item, index) => (
+              <article key={`${item.event_type}-${index}`} className="timeline-row">
+                <div className="timeline-dot" />
+                <div>
+                  <strong>{item.actor}</strong>
+                  <p>{item.summary}</p>
+                  <span>{formatTime(item.created_at)}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {configOpen ? (
+        <aside className="config-drawer">
+          <div className="drawer-head">
+            <div>
+              <p className="eyebrow">Model routing</p>
+              <h3>Connect any compatible assistant endpoint</h3>
             </div>
+            <button type="button" className="ghost-button" onClick={() => setConfigOpen(false)}>
+              Close
+            </button>
           </div>
-
-          <div className="memory-column">
-            <article className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Selected Incident</p>
-                  <h3>{selectedIncident.title}</h3>
-                </div>
-              </div>
-
-              <p className="support-copy">{selectedIncident.description || selectedIncident.impact_summary}</p>
-
-              <div className="detail-pairs">
-                <div>
-                  <span>Reporter</span>
-                  <strong>{selectedIncident.reporter}</strong>
-                </div>
-                <div>
-                  <span>Dedupe Key</span>
-                  <strong>{selectedIncident.dedupe_key}</strong>
-                </div>
-              </div>
-            </article>
-
-            <article className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Timeline</p>
-                  <h3>Response activity</h3>
-                </div>
-              </div>
-
-              <div className="timeline-list">
-                {timeline.map((item, index) => (
-                  <div className="timeline-item" key={`${item.event_type}-${index}`}>
-                    <strong>{item.event_type}</strong>
-                    <p>{item.summary || item.message}</p>
-                    <span>
-                      {item.actor} • {formatTime(item.created_at)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </article>
+          <div className="drawer-grid">
+            <label>
+              <span>API base</span>
+              <input value={apiBaseInput} onChange={(event) => setApiBaseInput(event.target.value)} placeholder="http://localhost:8000" />
+            </label>
+            <label>
+              <span>Provider label</span>
+              <input name="providerLabel" value={assistantConfig.providerLabel} onChange={updateAssistantConfig} placeholder="OpenRouter" />
+            </label>
+            <label>
+              <span>Model endpoint</span>
+              <input name="apiBaseUrl" value={assistantConfig.apiBaseUrl} onChange={updateAssistantConfig} placeholder="https://openrouter.ai/api/v1" />
+            </label>
+            <label>
+              <span>Model name</span>
+              <input name="model" value={assistantConfig.model} onChange={updateAssistantConfig} placeholder="openai/gpt-4.1-mini" />
+            </label>
+            <label className="full-width">
+              <span>API key</span>
+              <input name="apiKey" value={assistantConfig.apiKey} onChange={updateAssistantConfig} placeholder="sk-..." type="password" />
+            </label>
+            <label className="full-width">
+              <span>System prompt</span>
+              <textarea name="systemPrompt" value={assistantConfig.systemPrompt} onChange={updateAssistantConfig} rows={4} />
+            </label>
+            <label>
+              <span>Temperature</span>
+              <input name="temperature" value={assistantConfig.temperature} onChange={updateAssistantConfig} />
+            </label>
+            <label>
+              <span>Max tokens</span>
+              <input name="maxTokens" value={assistantConfig.maxTokens} onChange={updateAssistantConfig} />
+            </label>
           </div>
-        </section>
-      </main>
+          <div className="drawer-actions">
+            <button className="primary-button" type="button" onClick={applyApiBase}>
+              Save routing
+            </button>
+            <span>Typical values: OpenAI, OpenRouter, or a local `v1` gateway such as Ollama.</span>
+          </div>
+        </aside>
+      ) : null}
     </div>
   );
 }
