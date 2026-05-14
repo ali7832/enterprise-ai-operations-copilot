@@ -3,116 +3,76 @@ import {
   demoIncident,
   demoSnapshot,
   demoTriage,
-  getApiBase,
   loadHealth,
   loadIncidents,
   loadTimeline,
-  runTriage,
-  setApiBase
+  runAssistant,
+  runTriage
 } from "./api";
-import { demoPayload } from "./demoData";
 
-const STACK_BADGES = [
-  "AI Guidance",
-  "Issue Resolution",
-  "Stakeholder Updates",
-  "Enterprise Memory",
-  "Team Handoffs",
-  "Decision Support"
-];
-
-const QUICK_PROMPTS = [
+const QUICK_SCENARIOS = [
   {
-    id: "payments",
-    label: "Checkout issue",
-    form: {
-      title: "Customers cannot complete checkout",
-      description:
-        "Enterprise customers say checkout is failing during payment confirmation. Teams need quick guidance and an update for leadership.",
-      service_name: "payments",
-      environment: "production",
-      reporter: "customer success",
-      severity: "SEV2",
-      impact_summary: "Revenue-impacting checkout failures are affecting active customers.",
-      affected_regions: "US, Europe",
-      tags: "checkout, payments, customer-impact"
-    }
+    id: "checkout",
+    label: "Checkout failure",
+    problem:
+      "Enterprise customers are reporting that checkout fails at payment confirmation after the latest release.",
+    impact: "Revenue is at risk and support teams are receiving repeated complaints.",
+    urgency: "SEV2"
   },
   {
     id: "support",
-    label: "Support spike",
-    form: {
-      title: "Support team is seeing a sudden spike in complaints",
-      description:
-        "Customer support is overwhelmed by repeated complaints after a release. The team needs AI help to understand the likely issue and draft a response.",
-      service_name: "customer support",
-      environment: "production",
-      reporter: "support lead",
-      severity: "SEV3",
-      impact_summary: "Support queues are growing and response times are slipping.",
-      affected_regions: "Global",
-      tags: "support, complaints, release"
-    }
+    label: "Support surge",
+    problem:
+      "Support volume jumped after a product update and agents do not yet know the likely root cause or what to tell customers.",
+    impact: "Response times are slipping and escalation volume is climbing.",
+    urgency: "SEV3"
   },
   {
     id: "internal",
-    label: "Internal system issue",
-    form: {
-      title: "Internal finance dashboard is not loading",
-      description:
-        "Internal stakeholders cannot access a business-critical dashboard and need quick guidance, ownership suggestions, and a clean status message.",
-      service_name: "finance dashboard",
-      environment: "production",
-      reporter: "finance ops",
-      severity: "SEV2",
-      impact_summary: "Business teams cannot access a core internal reporting system.",
-      affected_regions: "HQ, Remote teams",
-      tags: "internal-tool, dashboard, finance"
-    }
+    label: "Internal system outage",
+    problem:
+      "A finance operations dashboard is unavailable and internal teams cannot access business-critical reporting before a leadership review.",
+    impact: "Decision-making is blocked for finance and operations stakeholders.",
+    urgency: "SEV2"
   }
 ];
 
-function buildInitialForm() {
-  return {
-    title: demoPayload.title,
-    description: demoPayload.description,
-    service_name: demoPayload.service_name,
-    environment: demoPayload.environment,
-    reporter: demoPayload.reporter,
-    severity: demoPayload.severity,
-    impact_summary: demoPayload.impact_summary,
-    affected_regions: demoPayload.affected_regions.join(", "),
-    tags: demoPayload.tags.join(", ")
-  };
-}
+const VALUE_POINTS = [
+  {
+    title: "Faster clarity",
+    text: "Turn a messy issue report into a structured view of what is happening, who is affected, and what should happen next."
+  },
+  {
+    title: "Aligned response",
+    text: "Give technical teams, operations leaders, and customer-facing teams one shared plan instead of disconnected updates."
+  },
+  {
+    title: "Ready-to-share output",
+    text: "Generate action steps, likely owners, customer-safe language, and executive-ready updates from the same workflow."
+  }
+];
 
-function toPayload(form) {
-  return {
-    title: form.title,
-    description: form.description,
-    service_name: form.service_name,
-    environment: form.environment,
-    reporter: form.reporter,
-    severity: form.severity,
-    impact_summary: form.impact_summary,
-    affected_regions: form.affected_regions
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
-    tags: form.tags
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean)
-  };
-}
+const CAPABILITY_PILLARS = [
+  {
+    title: "Understand the issue",
+    text: "The platform reads the situation, organizes the incident, and identifies the most likely problem area."
+  },
+  {
+    title: "Guide the response",
+    text: "It turns the issue into a visible action plan with likely owners, follow-up questions, and practical next steps."
+  },
+  {
+    title: "Keep everyone aligned",
+    text: "It prepares clear communication for leadership, operations, and customer-facing teams without making users rewrite everything."
+  }
+];
 
-function toIncidentFromPayload(form) {
-  const payload = toPayload(form);
+function buildInitialIssue() {
   return {
-    ...payload,
-    incident_id: `inc-local-${Date.now()}`,
-    dedupe_key: `${payload.service_name}|${payload.environment}|${payload.severity}`,
-    created_at: new Date().toISOString()
+    problem:
+      "Enterprise customers are reporting failed checkout attempts after a recent release. Teams need fast clarity and a response plan.",
+    impact: "Revenue is at risk and support teams are escalating the issue to operations leadership.",
+    urgency: "SEV2"
   };
 }
 
@@ -120,10 +80,12 @@ function formatTime(value) {
   if (!value) {
     return "now";
   }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
+
   return date.toLocaleString([], {
     month: "short",
     day: "numeric",
@@ -133,41 +95,226 @@ function formatTime(value) {
 }
 
 function severityClass(severity) {
-  return `severity-pill severity-${severity || "SEV2"}`;
+  return `severity-pill severity-${(severity || "SEV2").toLowerCase()}`;
 }
 
-function HeroStat({ label, value }) {
+function extractTitle(problem) {
+  const trimmed = problem.trim();
+  if (!trimmed) {
+    return "Enterprise issue requires review";
+  }
+
+  const sentence = trimmed.split(/[.!?]/)[0].trim();
+  if (sentence.length <= 72) {
+    return sentence;
+  }
+
+  return `${sentence.slice(0, 69).trim()}...`;
+}
+
+function inferServiceName(problem) {
+  const text = problem.toLowerCase();
+  if (text.includes("checkout") || text.includes("payment")) {
+    return "payments";
+  }
+  if (text.includes("support")) {
+    return "customer support";
+  }
+  if (text.includes("finance") || text.includes("dashboard")) {
+    return "finance dashboard";
+  }
+  if (text.includes("login") || text.includes("identity") || text.includes("auth")) {
+    return "identity";
+  }
+  return "enterprise operations";
+}
+
+function inferRegions(problem) {
+  const text = problem.toLowerCase();
+  const regions = [];
+
+  if (text.includes("us")) {
+    regions.push("US");
+  }
+  if (text.includes("europe") || text.includes("eu")) {
+    regions.push("Europe");
+  }
+  if (text.includes("global")) {
+    regions.push("Global");
+  }
+
+  return regions.length ? regions : ["Global"];
+}
+
+function inferTags(problem) {
+  return Array.from(
+    new Set(
+      problem
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, " ")
+        .split(/\s+/)
+        .filter((word) => word.length > 4)
+        .slice(0, 6)
+    )
+  );
+}
+
+function buildPayloadFromIssue(issue) {
+  return {
+    title: extractTitle(issue.problem),
+    description: issue.problem,
+    service_name: inferServiceName(issue.problem),
+    environment: "production",
+    reporter: "workspace user",
+    severity: issue.urgency,
+    impact_summary: issue.impact,
+    affected_regions: inferRegions(issue.problem),
+    tags: inferTags(issue.problem)
+  };
+}
+
+function createLocalIncident(issue) {
+  const payload = buildPayloadFromIssue(issue);
+
+  return {
+    ...payload,
+    incident_id: `inc-local-${Date.now()}`,
+    dedupe_key: `${payload.service_name}|${payload.environment}|${payload.severity}`,
+    created_at: new Date().toISOString()
+  };
+}
+
+function buildGuidancePrompt(issue, triage) {
+  return [
+    {
+      role: "user",
+      content: [
+        "Create an enterprise response brief for this issue.",
+        "Return valid JSON only.",
+        'Use this shape: {"situation":"", "likelySolution":"", "confidence":"high|medium|low", "steps":[{"title":"", "owner":"", "why":""}], "followUps":[""], "customerMessage":"", "leadershipMessage":"", "watchouts":[""]}.',
+        `Problem: ${issue.problem}`,
+        `Impact: ${issue.impact}`,
+        `Urgency: ${issue.urgency}`,
+        `Current triage summary: ${triage.incident_summary}`,
+        `Likely owners: ${(triage.enriched_context?.likely_owners || []).join(", ")}`,
+        `Action plan: ${(triage.action_plan || []).join(" | ")}`
+      ].join("\n")
+    }
+  ];
+}
+
+function extractJsonObject(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackGuidance(issue, triage) {
+  const owners = triage.enriched_context?.likely_owners || [];
+  const actionPlan = triage.action_plan || [];
+
+  return {
+    situation: triage.incident_summary,
+    likelySolution:
+      actionPlan[0] ||
+      "Stabilize the affected workflow, validate the most critical dependency path, and align the responsible team on a containment plan.",
+    confidence: triage.severity === "SEV1" ? "medium" : "high",
+    steps: actionPlan.slice(0, 4).map((item, index) => ({
+      title: item,
+      owner: owners[index] || owners[0] || "Operations lead",
+      why: index === 0 ? "This creates immediate control over the situation." : "This keeps the response moving without confusion."
+    })),
+    followUps: [
+      "What changed immediately before the issue started?",
+      "Which customer-facing workflows are currently failing?",
+      "What should be communicated in the next update?"
+    ],
+    customerMessage:
+      "We are actively investigating the issue, aligning the right teams, and will share another update as soon as the next checkpoint is confirmed.",
+    leadershipMessage: triage.leadership_update,
+    watchouts: [
+      "Do not widen the blast radius while testing fixes.",
+      "Avoid sending inconsistent messages across teams.",
+      "Keep the next update time explicit."
+    ]
+  };
+}
+
+function normaliseGuidance(payload, fallback) {
+  if (!payload || typeof payload !== "object") {
+    return fallback;
+  }
+
+  const steps = Array.isArray(payload.steps)
+    ? payload.steps
+        .map((step) => ({
+          title: String(step?.title || "").trim(),
+          owner: String(step?.owner || "").trim(),
+          why: String(step?.why || "").trim()
+        }))
+        .filter((step) => step.title)
+    : [];
+
+  const followUps = Array.isArray(payload.followUps)
+    ? payload.followUps.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+
+  const watchouts = Array.isArray(payload.watchouts)
+    ? payload.watchouts.map((item) => String(item).trim()).filter(Boolean)
+    : [];
+
+  return {
+    situation: String(payload.situation || fallback.situation).trim(),
+    likelySolution: String(payload.likelySolution || fallback.likelySolution).trim(),
+    confidence: String(payload.confidence || fallback.confidence).trim().toLowerCase(),
+    steps: steps.length ? steps : fallback.steps,
+    followUps: followUps.length ? followUps : fallback.followUps,
+    customerMessage: String(payload.customerMessage || fallback.customerMessage).trim(),
+    leadershipMessage: String(payload.leadershipMessage || fallback.leadershipMessage).trim(),
+    watchouts: watchouts.length ? watchouts : fallback.watchouts
+  };
+}
+
+function InsightStat({ label, value, tone }) {
   return (
-    <article className="hero-stat">
+    <article className={`insight-stat ${tone || ""}`.trim()}>
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
   );
 }
 
-function FeatureCard({ eyebrow, title, text }) {
+function CapabilityColumn({ title, text }) {
   return (
-    <article className="feature-card">
-      <p className="mini-label">{eyebrow}</p>
+    <div className="capability-column">
       <h3>{title}</h3>
       <p>{text}</p>
-    </article>
+    </div>
   );
 }
 
 function App() {
-  const [apiBase, setApiBaseState] = useState(getApiBase());
-  const [apiBaseInput, setApiBaseInput] = useState(getApiBase());
-  const [liveMode, setLiveMode] = useState(false);
   const [health, setHealth] = useState(null);
+  const [liveMode, setLiveMode] = useState(false);
   const [incidents, setIncidents] = useState([]);
-  const [timeline, setTimeline] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [issue, setIssue] = useState(buildInitialIssue);
   const [triageResult, setTriageResult] = useState(null);
-  const [triageMode, setTriageMode] = useState("waiting");
-  const [form, setForm] = useState(buildInitialForm);
-  const [searchText, setSearchText] = useState("");
-  const [copiedKey, setCopiedKey] = useState("");
+  const [guidance, setGuidance] = useState(() => buildFallbackGuidance(buildInitialIssue(), demoTriage));
+  const [workspaceStatus, setWorkspaceStatus] = useState("idle");
+  const [followUpInput, setFollowUpInput] = useState("");
+  const [assistantMessages, setAssistantMessages] = useState([]);
+  const [assistantStatus, setAssistantStatus] = useState("idle");
 
   useEffect(() => {
     let cancelled = false;
@@ -176,7 +323,8 @@ function App() {
       try {
         const nextHealth = await loadHealth();
         const nextIncidents = await loadIncidents();
-        const nextTimeline = await loadTimeline(nextIncidents[0]?.incident_id);
+        const firstIncidentId = nextIncidents[0]?.incident_id || null;
+        const nextTimeline = await loadTimeline(firstIncidentId);
 
         if (cancelled) {
           return;
@@ -186,16 +334,17 @@ function App() {
           setLiveMode(true);
           setHealth(nextHealth);
           setIncidents(nextIncidents);
-          setSelectedIncidentId(nextIncidents[0]?.incident_id || null);
+          setSelectedIncidentId(firstIncidentId);
           setTimeline(nextTimeline);
         });
       } catch {
         if (cancelled) {
           return;
         }
+
         const snapshot = demoSnapshot();
         startTransition(() => {
-          setLiveMode(snapshot.liveMode);
+          setLiveMode(false);
           setHealth(snapshot.health);
           setIncidents(snapshot.incidents);
           setSelectedIncidentId(snapshot.incidents[0]?.incident_id || null);
@@ -208,20 +357,20 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [apiBase]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateTimeline() {
+    async function refreshTimeline() {
       if (!selectedIncidentId || !liveMode) {
         return;
       }
 
       try {
-        const items = await loadTimeline(selectedIncidentId);
+        const nextTimeline = await loadTimeline(selectedIncidentId);
         if (!cancelled) {
-          setTimeline(items);
+          setTimeline(nextTimeline);
         }
       } catch {
         if (!cancelled) {
@@ -230,534 +379,565 @@ function App() {
       }
     }
 
-    hydrateTimeline();
+    refreshTimeline();
     return () => {
       cancelled = true;
     };
-  }, [selectedIncidentId, liveMode]);
+  }, [liveMode, selectedIncidentId]);
 
-  const filteredIncidents = useMemo(() => {
-    const query = searchText.trim().toLowerCase();
-    if (!query) {
-      return incidents;
-    }
+  const activeIncident =
+    incidents.find((incidentItem) => incidentItem.incident_id === selectedIncidentId) || incidents[0] || demoIncident;
+  const activeTriage = triageResult || demoTriage;
 
-    return incidents.filter((incident) =>
-      [incident.title, incident.service_name, incident.severity, incident.reporter, incident.impact_summary]
-        .join(" ")
-        .toLowerCase()
-        .includes(query)
-    );
-  }, [incidents, searchText]);
+  const proofStats = useMemo(
+    () => [
+      { label: "Response mode", value: liveMode ? "Managed AI live" : "Guided workflow" },
+      { label: "Likely owners", value: String(activeTriage.enriched_context?.likely_owners?.length || 0) },
+      { label: "Action steps", value: String(activeTriage.action_plan?.length || 0) }
+    ],
+    [activeTriage, liveMode]
+  );
 
-  const selectedIncident =
-    incidents.find((incident) => incident.incident_id === selectedIncidentId) || incidents[0] || demoIncident;
-
-  const activeResult = triageResult || demoTriage;
-  const likelyOwners = activeResult.enriched_context?.likely_owners || [];
-  const dependencies = activeResult.enriched_context?.dependencies || [];
-  const stakeholderUpdates = activeResult.stakeholder_updates || [];
-  const recentIncidents = filteredIncidents.length ? filteredIncidents : [demoIncident];
-
-  function updateForm(event) {
+  function updateIssue(event) {
     const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+    setIssue((current) => ({ ...current, [name]: value }));
   }
 
-  function applyApiBase() {
-    const nextBase = apiBaseInput.trim();
-    setApiBase(nextBase);
-    setApiBaseState(nextBase);
+  function applyScenario(scenario) {
+    setIssue({
+      problem: scenario.problem,
+      impact: scenario.impact,
+      urgency: scenario.urgency
+    });
   }
 
-  function applyQuickPrompt(prompt) {
-    setForm(prompt.form);
-    document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  async function handleAnalyze(event) {
+    event.preventDefault();
+    setWorkspaceStatus("loading");
+    setAssistantStatus("idle");
+
+    const payload = buildPayloadFromIssue(issue);
+    const localIncident = createLocalIncident(issue);
+
+    try {
+      const nextTriage = await runTriage(payload);
+      const fallbackGuidance = buildFallbackGuidance(issue, nextTriage);
+      const nextMessages = buildGuidancePrompt(issue, nextTriage);
+      const nextIncident = {
+        ...localIncident,
+        incident_id: nextTriage.incident_id
+      };
+
+      let nextGuidance = fallbackGuidance;
+      let nextAssistantMessages = [];
+      let nextAssistantStatus = "fallback";
+
+      try {
+        const assistantReply = await runAssistant({
+          messages: nextMessages,
+          incidentContext: nextIncident,
+          triageContext: {
+            incident_id: nextTriage.incident_id,
+            severity: nextTriage.severity,
+            incident_summary: nextTriage.incident_summary,
+            likely_owners: nextTriage.enriched_context?.likely_owners || [],
+            action_plan: nextTriage.action_plan || [],
+            leadership_update: nextTriage.leadership_update
+          }
+        });
+
+        const parsed = extractJsonObject(assistantReply.answer);
+        nextGuidance = normaliseGuidance(parsed, fallbackGuidance);
+        nextAssistantMessages = [
+          { role: "user", content: issue.problem },
+          {
+            role: "assistant",
+            content: `${nextGuidance.situation}\n\nLikely solution: ${nextGuidance.likelySolution}`
+          }
+        ];
+        nextAssistantStatus = assistantReply.used_live_model ? "live" : "fallback";
+      } catch {
+        nextAssistantMessages = [
+          { role: "user", content: issue.problem },
+          { role: "assistant", content: fallbackGuidance.situation }
+        ];
+      }
+
+      startTransition(() => {
+        setLiveMode(true);
+        setTriageResult(nextTriage);
+        setGuidance(nextGuidance);
+        setWorkspaceStatus("ready");
+        setAssistantMessages(nextAssistantMessages);
+        setAssistantStatus(nextAssistantStatus);
+        setIncidents((current) => [nextIncident, ...current].slice(0, 8));
+        setSelectedIncidentId(nextTriage.incident_id);
+        setTimeline((current) => [
+          {
+            incident_id: nextTriage.incident_id,
+            event_type: "analysis",
+            actor: "SignalDesk AI",
+            summary: "Generated a guided response plan and stakeholder communication draft.",
+            created_at: new Date().toISOString()
+          },
+          ...current
+        ]);
+      });
+    } catch {
+      const fallbackGuidance = buildFallbackGuidance(issue, demoTriage);
+
+      startTransition(() => {
+        setLiveMode(false);
+        setTriageResult(demoTriage);
+        setGuidance(fallbackGuidance);
+        setWorkspaceStatus("ready");
+        setAssistantMessages([
+          { role: "user", content: issue.problem },
+          { role: "assistant", content: fallbackGuidance.situation }
+        ]);
+        setAssistantStatus("fallback");
+        setIncidents((current) => [localIncident, ...current].slice(0, 8));
+        setSelectedIncidentId(localIncident.incident_id);
+        setTimeline(demoSnapshot().timeline);
+      });
+    }
   }
 
-  function scrollToWorkspace() {
-    document.getElementById("workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  async function handleFollowUpSubmit(event) {
+    event.preventDefault();
+    const prompt = followUpInput.trim();
 
-  async function handleCopy(text) {
-    if (!text) {
+    if (!prompt) {
       return;
     }
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(text);
-      window.setTimeout(() => setCopiedKey(""), 1800);
-    } catch {}
-  }
 
-  async function handleTriageSubmit(event) {
-    event.preventDefault();
-    const payload = toPayload(form);
+    setAssistantStatus("loading");
+    setFollowUpInput("");
+
+    const nextMessages = [...assistantMessages, { role: "user", content: prompt }];
+    setAssistantMessages(nextMessages);
 
     try {
-      const result = await runTriage(payload);
+      const assistantReply = await runAssistant({
+        messages: nextMessages,
+        incidentContext: activeIncident,
+        triageContext: {
+          incident_id: activeTriage.incident_id,
+          severity: activeTriage.severity,
+          incident_summary: activeTriage.incident_summary,
+          likely_owners: activeTriage.enriched_context?.likely_owners || [],
+          action_plan: activeTriage.action_plan || [],
+          leadership_update: activeTriage.leadership_update
+        }
+      });
+
       startTransition(() => {
-        setTriageResult(result);
-        setTriageMode("live");
-        setLiveMode(true);
-        setIncidents((current) => [toIncidentFromPayload(form), ...current].slice(0, 12));
+        setAssistantMessages((current) => [...current, { role: "assistant", content: assistantReply.answer }]);
+        setAssistantStatus(assistantReply.used_live_model ? "live" : "fallback");
       });
     } catch {
       startTransition(() => {
-        setTriageResult(demoTriage);
-        setTriageMode("demo");
+        setAssistantMessages((current) => [
+          ...current,
+          {
+            role: "assistant",
+            content:
+              "The platform could not reach the live assistant service just now, but the response plan remains available and ready to use."
+          }
+        ]);
+        setAssistantStatus("fallback");
       });
     }
   }
 
   return (
-    <div className="page-shell">
+    <div className="site-shell">
       <header className="site-header">
-        <div className="brand-row">
-          <div className="brand-mark">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div>
-            <p className="mini-label">AI-Assisted Enterprise Response System</p>
-            <strong>Enterprise AI Operations Copilot</strong>
-          </div>
-        </div>
+        <a className="brand-lockup" href="#top">
+          <span className="brand-mark">S</span>
+          <span className="brand-wording">
+            <strong>SignalDesk AI</strong>
+            <small>Enterprise response intelligence</small>
+          </span>
+        </a>
 
         <nav className="site-nav">
           <a href="#platform">Platform</a>
+          <a href="#capabilities">Capabilities</a>
           <a href="#workspace">Workspace</a>
-          <a href="#memory">Memory</a>
         </nav>
 
-        <div className="header-actions">
-          <span className={`status-pill ${liveMode ? "status-live" : "status-demo"}`}>
-            {liveMode ? "Live backend" : "Demo mode"}
-          </span>
-          <button className="secondary-button" onClick={scrollToWorkspace} type="button">
-            Open Workspace
-          </button>
-        </div>
+        <a className="header-cta" href="#workspace">
+          Try The Workspace
+        </a>
       </header>
 
-      <main className="page-main">
+      <main id="top">
         <section className="hero-section">
+          <div className="hero-backdrop" aria-hidden="true">
+            <span className="hero-orbit hero-orbit-a" />
+            <span className="hero-orbit hero-orbit-b" />
+            <span className="hero-grid" />
+          </div>
+
           <div className="hero-copy">
-            <p className="mini-label">The AI guidance platform for enterprise teams</p>
-            <h1>Tell the AI what is going wrong and get clear guidance your team can actually use.</h1>
+            <p className="eyebrow">AI for enterprise issue response</p>
+            <h1>Turn fast-moving business problems into clear action, aligned teams, and confident updates.</h1>
             <p className="hero-text">
-              This is an end-user AI tool for enterprise problems. A user can describe an issue in plain
-              language, get AI-assisted guidance, see likely owners and next steps, and instantly prepare
-              updates for leaders, support teams, or other stakeholders.
+              SignalDesk AI helps enterprise teams explain a problem in plain language and instantly receive a
+              structured response plan, likely owners, likely solution path, and ready-to-share messaging.
             </p>
 
             <div className="hero-actions">
-              <button className="primary-button" onClick={scrollToWorkspace} type="button">
-                Ask The AI
-              </button>
-              <button className="secondary-button" onClick={applyApiBase} type="button">
-                Refresh Connection
-              </button>
+              <a className="primary-button" href="#workspace">
+                Analyze An Issue
+              </a>
+              <a className="secondary-button" href="#platform">
+                See How It Works
+              </a>
             </div>
 
-            <div className="prompt-strip">
-              {QUICK_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt.id}
-                  className="prompt-pill"
-                  onClick={() => applyQuickPrompt(prompt)}
-                  type="button"
-                >
-                  {prompt.label}
-                </button>
+            <div className="proof-row">
+              {proofStats.map((stat, index) => (
+                <InsightStat key={stat.label} label={stat.label} value={stat.value} tone={index === 0 ? "accent" : ""} />
               ))}
             </div>
-
-            <div className="hero-stats">
-              <HeroStat label="Issues tracked" value={recentIncidents.length} />
-              <HeroStat label="Teams suggested" value={likelyOwners.length || "0"} />
-              <HeroStat label="Updates drafted" value={stakeholderUpdates.length || "0"} />
-              <HeroStat label="AI mode" value={liveMode ? "Connected" : "Demo"} />
-            </div>
           </div>
 
-          <div className="hero-preview">
-            <div className="preview-window">
-              <div className="preview-topbar">
-                <span>app.enterprise-ai.internal</span>
-                <strong>{health?.backend_summary?.storage || "demo"} stack</strong>
+          <div className="hero-visual">
+            <div className="hero-signal">
+              <div className="signal-header">
+                <span>Live issue intelligence</span>
+                <strong>{liveMode ? "Managed AI active" : "Response engine ready"}</strong>
               </div>
 
-              <div className="preview-grid">
-                <div className="preview-panel preview-panel-main">
-                  <p className="mini-label">AI Help Summary</p>
-                  <h3>{activeResult.incident_summary}</h3>
-                  <div className="preview-tags">
-                    {dependencies.slice(0, 3).map((item) => (
-                      <span key={`${item.dependency_name}-${item.criticality}`}>
-                        {item.dependency_name} • {item.criticality}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+              <div className="signal-summary">
+                <p>Current platform readout</p>
+                <h2>{guidance.situation}</h2>
+              </div>
 
-                <div className="preview-panel">
-                  <p className="mini-label">Suggested teams</p>
-                  <ul className="clean-list">
-                    {likelyOwners.map((owner) => (
-                      <li key={owner}>{owner}</li>
-                    ))}
-                  </ul>
+              <div className="signal-columns">
+                <div>
+                  <span>Likely solution</span>
+                  <strong>{guidance.likelySolution}</strong>
                 </div>
+                <div>
+                  <span>Confidence</span>
+                  <strong>{guidance.confidence}</strong>
+                </div>
+              </div>
 
-                <div className="preview-panel">
-                  <p className="mini-label">Ready-to-share update</p>
-                  <p>{activeResult.leadership_update}</p>
-                </div>
-
-                <div className="preview-panel">
-                  <p className="mini-label">Response timeline</p>
-                  <div className="mini-timeline">
-                    {timeline.slice(0, 3).map((item, index) => (
-                      <div className="mini-timeline-item" key={`${item.event_type}-${index}`}>
-                        <strong>{item.event_type}</strong>
-                        <span>{item.actor}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+              <div className="signal-steps">
+                {guidance.steps.slice(0, 3).map((step, index) => (
+                  <article key={`${step.title}-${index}`}>
+                    <span>{`0${index + 1}`}</span>
+                    <div>
+                      <strong>{step.title}</strong>
+                      <p>{step.owner || "Response owner"}</p>
+                    </div>
+                  </article>
+                ))}
               </div>
             </div>
           </div>
         </section>
 
-        <section className="stack-strip">
-          {STACK_BADGES.map((badge) => (
-            <span key={badge} className="stack-badge">
-              {badge}
-            </span>
-          ))}
+        <section id="platform" className="value-section">
+          <div className="section-intro">
+            <p className="eyebrow">Why teams use it</p>
+            <h2>One product for understanding the issue, guiding the response, and keeping the business aligned.</h2>
+          </div>
+
+          <div className="value-grid">
+            {VALUE_POINTS.map((point) => (
+              <article key={point.title} className="value-item">
+                <h3>{point.title}</h3>
+                <p>{point.text}</p>
+              </article>
+            ))}
+          </div>
         </section>
 
-        <section id="platform" className="feature-section">
-          <FeatureCard
-            eyebrow="Easy Input"
-            title="Users can describe problems in plain language."
-            text="The product is designed for normal enterprise users, not just technical operators, so people can explain issues without special training."
-          />
-          <FeatureCard
-            eyebrow="AI Guidance"
-            title="The AI turns that input into clear next steps."
-            text="Instead of giving vague answers, the system suggests what to do next, who should be involved, and how the issue should be communicated."
-          />
-          <FeatureCard
-            eyebrow="Stakeholder Help"
-            title="Stakeholder-facing updates are ready in seconds."
-            text="Business teams, support leads, and managers can quickly turn AI output into updates they can share across the company."
-          />
+        <section id="capabilities" className="capability-section">
+          <div className="section-intro">
+            <p className="eyebrow">What the AI does</p>
+            <h2>It does not just answer questions. It turns an issue into a visible operational plan.</h2>
+          </div>
+
+          <div className="capability-layout">
+            <div className="capability-story">
+              <span className="story-step">01</span>
+              <div>
+                <h3>The user explains the problem in plain language.</h3>
+                <p>
+                  No technical prompt writing, no hidden setup, no platform knowledge required. The experience starts
+                  with the problem as the user sees it.
+                </p>
+              </div>
+            </div>
+
+            <div className="capability-story">
+              <span className="story-step">02</span>
+              <div>
+                <h3>The platform structures the response.</h3>
+                <p>
+                  It organizes the issue into situation, likely owners, likely solution path, follow-up questions,
+                  communication guidance, and next-step actions.
+                </p>
+              </div>
+            </div>
+
+            <div className="capability-story">
+              <span className="story-step">03</span>
+              <div>
+                <h3>The team acts from one shared view.</h3>
+                <p>
+                  Operations, support, and leadership all work from the same response plan instead of piecing together
+                  updates from scattered messages.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="pillar-grid">
+            {CAPABILITY_PILLARS.map((pillar) => (
+              <CapabilityColumn key={pillar.title} title={pillar.title} text={pillar.text} />
+            ))}
+          </div>
+        </section>
+
+        <section className="workspace-intro">
+          <div className="section-intro">
+            <p className="eyebrow">Product workspace</p>
+            <h2>See the assistant turn a real issue into a response plan.</h2>
+            <p>
+              This is the live product surface: describe the issue, run the analysis, review the plan, and ask follow-up
+              questions from the same workspace.
+            </p>
+          </div>
         </section>
 
         <section id="workspace" className="workspace-section">
-          <div className="section-heading">
-            <div>
-              <p className="mini-label">Workspace</p>
-              <h2>One workspace for incident brief, AI analysis, and action output.</h2>
-            </div>
-            <div className="connection-card">
-              <label className="field-stack">
-                <span>API Base</span>
-                <input
-                  type="text"
-                  value={apiBaseInput}
-                  onChange={(event) => setApiBaseInput(event.target.value)}
-                  placeholder="Leave blank to use the Vite proxy"
-                />
-              </label>
-              <button className="secondary-button" onClick={applyApiBase} type="button">
-                Apply Connection
-              </button>
-            </div>
-          </div>
-
-          <div className="workspace-panels">
-            <section className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 01</p>
-                  <h3>Tell The AI What Happened</h3>
-                </div>
-                <button className="secondary-button" onClick={() => setForm(buildInitialForm())} type="button">
-                  Use Sample
-                </button>
-              </div>
-
-              <form className="incident-form" onSubmit={handleTriageSubmit}>
-                <div className="field-grid">
-                  <label className="field-stack">
-                    <span>Short title</span>
-                    <input name="title" value={form.title} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Product, team, or system</span>
-                    <input name="service_name" value={form.service_name} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Where is this happening?</span>
-                    <input name="environment" value={form.environment} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>Who reported it?</span>
-                    <input name="reporter" value={form.reporter} onChange={updateForm} required />
-                  </label>
-                  <label className="field-stack">
-                    <span>How serious does it feel?</span>
-                    <select name="severity" value={form.severity} onChange={updateForm}>
-                      <option value="SEV1">SEV1</option>
-                      <option value="SEV2">SEV2</option>
-                      <option value="SEV3">SEV3</option>
-                      <option value="SEV4">SEV4</option>
-                    </select>
-                  </label>
-                  <label className="field-stack">
-                    <span>Who or what is affected?</span>
-                    <input name="affected_regions" value={form.affected_regions} onChange={updateForm} required />
-                  </label>
-                </div>
-
-                <label className="field-stack">
-                  <span>What is the business impact?</span>
-                  <textarea
-                    name="impact_summary"
-                    rows="3"
-                    value={form.impact_summary}
-                    onChange={updateForm}
-                    required
-                  />
-                </label>
-
-                <label className="field-stack">
-                  <span>Describe the problem in plain language</span>
-                  <textarea
-                    name="description"
-                    rows="4"
-                    value={form.description}
-                    onChange={updateForm}
-                    required
-                  />
-                </label>
-
-                <label className="field-stack">
-                  <span>Keywords</span>
-                  <input name="tags" value={form.tags} onChange={updateForm} required />
-                </label>
-
-                <div className="button-row">
-                  <button className="primary-button" type="submit">
-                    Get AI Guidance
-                  </button>
-                  <div className="run-state">
-                    <span>Status</span>
-                    <strong>{triageMode === "waiting" ? "Ready" : `${triageMode.toUpperCase()} result`}</strong>
-                  </div>
-                </div>
-              </form>
-            </section>
-
-            <section className="surface-card surface-highlight">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 02</p>
-                  <h3>AI Guidance</h3>
-                </div>
-                <span className={`status-pill ${liveMode ? "status-live" : "status-demo"}`}>
-                  {liveMode ? "Live backend" : "Demo mode"}
-                </span>
-              </div>
-
-              <article className="analysis-card analysis-hero">
-                <p className="mini-label">AI Summary</p>
-                <div className="analysis-headline">
-                  <span className={severityClass(activeResult.severity)}>{activeResult.severity}</span>
-                  <h4>{activeResult.incident_summary}</h4>
-                </div>
-              </article>
-
-              <div className="analysis-grid">
-                <article className="analysis-card">
-                  <p className="mini-label">What the AI thinks is affected</p>
-                  <h4>{activeResult.enriched_context?.affected_capability}</h4>
-                  <p>{activeResult.enriched_context?.blast_radius}</p>
-                </article>
-
-                <article className="analysis-card">
-                  <p className="mini-label">Who the AI suggests involving</p>
-                  <ul className="clean-list">
-                    {likelyOwners.map((owner) => (
-                      <li key={owner}>{owner}</li>
-                    ))}
-                  </ul>
-                </article>
-              </div>
-
-              <article className="analysis-card">
-                <p className="mini-label">Recommended next steps</p>
-                <ul className="clean-list">
-                  {activeResult.action_plan?.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Related systems and dependencies</p>
-                <div className="dependency-tags">
-                  {dependencies.map((dependency) => (
-                    <span key={`${dependency.dependency_name}-${dependency.criticality}`} className="dependency-tag">
-                      {dependency.dependency_name} • {dependency.criticality}
-                    </span>
-                  ))}
-                </div>
-              </article>
-            </section>
-
-            <section className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Step 03</p>
-                  <h3>Share And Follow Up</h3>
-                </div>
-              </div>
-
-              <article className="analysis-card">
-                <p className="mini-label">Executive-ready update</p>
-                <p>{activeResult.leadership_update}</p>
-                <button
-                  className="secondary-button button-inline"
-                  onClick={() => handleCopy(activeResult.leadership_update)}
-                  type="button"
-                >
-                  {copiedKey === activeResult.leadership_update ? "Copied" : "Copy update"}
-                </button>
-              </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Ready-to-share drafts</p>
-                <div className="stack-tight">
-                  {stakeholderUpdates.map((update) => (
-                    <div className="message-card" key={`${update.audience}-${update.delivery_channel}`}>
-                      <strong>
-                        {update.audience} • {update.delivery_channel}
-                      </strong>
-                      <p>{update.title}</p>
-                      <p>{update.body}</p>
-                      <button
-                        className="secondary-button button-inline"
-                        onClick={() => handleCopy(`${update.title}\n\n${update.body}`)}
-                        type="button"
-                      >
-                        {copiedKey === `${update.title}\n\n${update.body}` ? "Copied" : "Copy draft"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </article>
-
-              <article className="analysis-card">
-                <p className="mini-label">Helpful guidance the AI used</p>
-                <div className="stack-tight">
-                  {activeResult.runbooks?.map((runbook) => (
-                    <div className="message-card" key={runbook.runbook_id}>
-                      <strong>{runbook.title}</strong>
-                      <p>{runbook.summary}</p>
-                      <p>{runbook.immediate_actions?.join(" • ")}</p>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            </section>
-          </div>
-        </section>
-
-        <section id="memory" className="memory-section">
-          <div className="memory-column">
-            <div className="section-heading compact">
+          <div className="workspace-compose">
+            <div className="compose-header">
               <div>
-                <p className="mini-label">Incident Memory</p>
-                <h2>Review recent incidents and live response activity.</h2>
+                <p className="eyebrow">Describe the issue</p>
+                <h3>Tell the platform what is going wrong.</h3>
               </div>
+              <span className={`status-chip ${liveMode ? "status-live" : "status-guided"}`}>
+                {liveMode ? "Managed AI live" : "Guided response mode"}
+              </span>
             </div>
 
-            <label className="field-stack search-field">
-              <span>Search incidents</span>
-              <input
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search title, service, severity, or reporter"
-              />
-            </label>
-
-            <div className="incident-list">
-              {recentIncidents.map((incident) => (
-                <button
-                  key={incident.incident_id}
-                  className={`incident-item ${selectedIncidentId === incident.incident_id ? "selected" : ""}`}
-                  onClick={() => setSelectedIncidentId(incident.incident_id)}
-                  type="button"
-                >
-                  <strong>{incident.title}</strong>
-                  <span>
-                    <span className={severityClass(incident.severity)}>{incident.severity}</span> {incident.service_name}
-                  </span>
-                  <span>{formatTime(incident.created_at)}</span>
+            <div className="scenario-row">
+              {QUICK_SCENARIOS.map((scenario) => (
+                <button key={scenario.id} type="button" className="scenario-chip" onClick={() => applyScenario(scenario)}>
+                  {scenario.label}
                 </button>
               ))}
             </div>
+
+            <form className="compose-form" onSubmit={handleAnalyze}>
+              <label>
+                <span>What is happening?</span>
+                <textarea
+                  name="problem"
+                  rows={5}
+                  value={issue.problem}
+                  onChange={updateIssue}
+                  placeholder="Describe the issue in plain language."
+                />
+              </label>
+
+              <label>
+                <span>What is the business impact?</span>
+                <textarea
+                  name="impact"
+                  rows={4}
+                  value={issue.impact}
+                  onChange={updateIssue}
+                  placeholder="Explain what is affected and why it matters."
+                />
+              </label>
+
+              <label>
+                <span>How urgent is it?</span>
+                <select name="urgency" value={issue.urgency} onChange={updateIssue}>
+                  <option value="SEV1">Critical</option>
+                  <option value="SEV2">High</option>
+                  <option value="SEV3">Elevated</option>
+                  <option value="SEV4">Monitor</option>
+                </select>
+              </label>
+
+              <button className="primary-button" type="submit">
+                {workspaceStatus === "loading" ? "Analyzing..." : "Generate Response Plan"}
+              </button>
+            </form>
           </div>
 
-          <div className="memory-column">
-            <article className="surface-card">
-              <div className="surface-header">
-                <div>
-                  <p className="mini-label">Selected issue</p>
-                  <h3>{selectedIncident.title}</h3>
+          <div className="workspace-results">
+            <div className="results-header">
+              <div>
+                <p className="eyebrow">Response brief</p>
+                <h3>{guidance.situation}</h3>
+              </div>
+              <span className={`confidence-badge confidence-${guidance.confidence || "medium"}`}>
+                {`${guidance.confidence || "medium"} confidence`}
+              </span>
+            </div>
+
+            <div className="results-grid">
+              <article className="results-panel panel-strong">
+                <span>Likely solution path</span>
+                <strong>{guidance.likelySolution}</strong>
+              </article>
+
+              <article className="results-panel">
+                <span>Primary leadership line</span>
+                <p>{guidance.leadershipMessage}</p>
+              </article>
+
+              <article className="results-panel">
+                <span>Customer-safe message</span>
+                <p>{guidance.customerMessage}</p>
+              </article>
+            </div>
+
+            <div className="action-board">
+              <div className="action-column">
+                <h4>Recommended next steps</h4>
+                <div className="step-list">
+                  {guidance.steps.map((step, index) => (
+                    <article key={`${step.title}-${index}`} className="step-card">
+                      <span>{`0${index + 1}`}</span>
+                      <div>
+                        <strong>{step.title}</strong>
+                        <p>{step.why}</p>
+                        <small>{step.owner}</small>
+                      </div>
+                    </article>
+                  ))}
                 </div>
               </div>
 
-              <p className="support-copy">{selectedIncident.description || selectedIncident.impact_summary}</p>
+              <div className="action-column">
+                <h4>Follow-up questions</h4>
+                <ul className="plain-list">
+                  {guidance.followUps.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
 
-              <div className="detail-pairs">
-                <div>
-                  <span>Reported by</span>
-                  <strong>{selectedIncident.reporter}</strong>
-                </div>
-                <div>
-                  <span>Tracking key</span>
-                  <strong>{selectedIncident.dedupe_key}</strong>
-                </div>
+                <h4>Watchouts</h4>
+                <ul className="plain-list">
+                  {guidance.watchouts.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
               </div>
-            </article>
+            </div>
 
-            <article className="surface-card">
-              <div className="surface-header">
+            <div className="assistant-panel">
+              <div className="assistant-header">
                 <div>
-                  <p className="mini-label">Timeline</p>
-                  <h3>What happened next</h3>
+                  <p className="eyebrow">Ask a follow-up</p>
+                  <h4>Continue the conversation from the same issue context.</h4>
                 </div>
+                <span className={`status-chip ${assistantStatus === "live" ? "status-live" : "status-guided"}`}>
+                  {assistantStatus === "loading"
+                    ? "Responding"
+                    : assistantStatus === "live"
+                      ? "Live assistant"
+                      : "Guided assistant"}
+                </span>
               </div>
 
-              <div className="timeline-list">
-                {timeline.map((item, index) => (
-                  <div className="timeline-item" key={`${item.event_type}-${index}`}>
-                    <strong>{item.event_type}</strong>
-                    <p>{item.summary || item.message}</p>
-                    <span>
-                      {item.actor} • {formatTime(item.created_at)}
-                    </span>
-                  </div>
+              <div className="chat-log">
+                {assistantMessages.length ? (
+                  assistantMessages.map((message, index) => (
+                    <article key={`${message.role}-${index}`} className={`chat-bubble chat-${message.role}`}>
+                      <span>{message.role === "assistant" ? "SignalDesk AI" : "User"}</span>
+                      <p>{message.content}</p>
+                    </article>
+                  ))
+                ) : (
+                  <article className="chat-bubble chat-assistant">
+                    <span>SignalDesk AI</span>
+                    <p>
+                      Ask the platform to explain the likely cause, refine the plan, or tailor the next update for a
+                      specific audience.
+                    </p>
+                  </article>
+                )}
+              </div>
+
+              <form className="follow-up-form" onSubmit={handleFollowUpSubmit}>
+                <textarea
+                  rows={3}
+                  value={followUpInput}
+                  onChange={(event) => setFollowUpInput(event.target.value)}
+                  placeholder="Ask a follow-up question like: What should support tell customers right now?"
+                />
+                <button className="secondary-button" type="submit">
+                  Send Follow-Up
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section className="memory-section">
+          <div className="section-intro memory-intro">
+            <p className="eyebrow">Operational memory</p>
+            <h2>Keep the latest issue context, response activity, and ownership visible.</h2>
+          </div>
+
+          <div className="memory-grid">
+            <div className="memory-panel">
+              <h3>Recent issues</h3>
+              <div className="memory-list">
+                {incidents.map((incidentItem) => (
+                  <button
+                    key={incidentItem.incident_id}
+                    type="button"
+                    className={`memory-item ${incidentItem.incident_id === selectedIncidentId ? "memory-active" : ""}`}
+                    onClick={() => setSelectedIncidentId(incidentItem.incident_id)}
+                  >
+                    <div>
+                      <strong>{incidentItem.title}</strong>
+                      <span>{incidentItem.service_name}</span>
+                    </div>
+                    <small>{formatTime(incidentItem.created_at)}</small>
+                  </button>
                 ))}
               </div>
-            </article>
+            </div>
+
+            <div className="memory-panel">
+              <h3>Latest activity</h3>
+              <div className="timeline-list">
+                {timeline.map((item, index) => (
+                  <article key={`${item.event_type}-${index}`} className="timeline-item">
+                    <span className="timeline-dot" />
+                    <div>
+                      <strong>{item.summary || item.event_type}</strong>
+                      <p>{item.actor}</p>
+                      <small>{formatTime(item.created_at)}</small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="memory-panel">
+              <h3>Selected issue</h3>
+              <div className="selected-issue">
+                <span className={severityClass(activeIncident.severity)}>{activeIncident.severity}</span>
+                <strong>{activeIncident.title}</strong>
+                <p>{activeIncident.description || activeIncident.impact_summary}</p>
+              </div>
+            </div>
           </div>
         </section>
       </main>
