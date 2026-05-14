@@ -12,6 +12,7 @@ from app.integrations.redis_cache import RedisWorkflowCache
 from app.repositories.base import IncidentRepository, RunbookRepository, TimelineRepository, WorkflowRunSink
 from app.repositories.jsonl import CompositeSink, JsonlSink
 from app.repositories.memory import FixtureRunbookRepository, InMemoryIncidentRepository, InMemoryTimelineRepository
+from app.services.assistant import CopilotAssistantService
 from app.services.enrichment import IncidentEnrichmentService
 from app.services.intake import IncidentIntakeService
 from app.services.investigation import InvestigationService
@@ -73,12 +74,14 @@ def create_app() -> object:
         workflow_cache=workflow_cache,
         workflow_cache_ttl_seconds=settings.workflow_cache_ttl_seconds,
     )
+    assistant_service = CopilotAssistantService(settings)
 
     app = FastAPI(title=settings.app_name)
     app.include_router(
         build_router(
             intake_service=intake_service,
             workflow_service=workflow_service,
+            assistant_service=assistant_service,
             incident_repository=incident_repository,
             timeline_repository=timeline_repository,
             runbook_repository=runbook_repository,
