@@ -1,24 +1,24 @@
 # Enterprise AI Operations Copilot
 
-Private, interview-focused enterprise application inspired by large-account operations environments. This build is designed to feel like a real internal AI operations product for incident responders, service owners, and support leaders rather than a generic portfolio demo.
+Private, interview-focused enterprise application inspired by large-account operations environments. This build is designed to feel like a real internal AI product for enterprise teams rather than a generic portfolio demo.
 
 ## What This System Does
 
-Enterprise AI Operations Copilot helps operations teams:
+Enterprise AI Operations Copilot helps teams:
 
-- intake an incident
-- retrieve relevant runbooks
-- assemble service context
-- produce a structured triage plan
-- draft stakeholder-facing updates
-- collaborate with a configurable model-backed copilot from the same workspace
+- describe an incident or business issue in plain language
+- generate structured AI-assisted triage guidance
+- identify likely owners and related dependencies
+- produce next-step recommendations that are easy to act on
+- draft stakeholder-facing updates for leadership and support teams
+- review recent incident history and timeline context from one workspace
 
 ## Stack
 
 - FastAPI for the API layer
 - LangGraph-compatible workflow orchestration
 - PostgreSQL, Redis, and OpenSearch as optional runtime backends
-- React and Vite for the operator UI
+- React and Vite for the frontend
 - Docker Compose for the local stack
 - Prometheus and Grafana for observability
 
@@ -37,36 +37,16 @@ npm install
 npm run dev
 ```
 
-By default the frontend talks to the backend on the same origin. If you run the frontend separately, set the backend URL in the model routing drawer inside the UI.
+By default the frontend talks to the backend on the same origin. If you run the frontend separately, set the backend URL in the API Base field inside the UI.
 
-## AI Assistant Routing
+## Main User Flow
 
-The assistant route accepts any OpenAI-compatible chat completion endpoint.
-
-Typical options:
-
-- OpenAI: `https://api.openai.com/v1`
-- OpenRouter: `https://openrouter.ai/api/v1`
-- local gateway: `http://localhost:11434/v1`
-
-Set these through `.env` or in the UI drawer:
-
-- `AI_PROVIDER_LABEL`
-- `AI_API_BASE_URL`
-- `AI_API_KEY`
-- `AI_MODEL`
-- `AI_SYSTEM_PROMPT`
-
-If no live model is configured, the assistant still responds in grounded demo mode so the workspace remains interview-safe and runnable.
-
-## Main User Flows
-
-- operator creates or pastes an incident
-- workflow generates triage context and likely owners
-- retrieved runbooks and action plans stay visible in the workspace
-- operator asks the assistant for summaries, rollback guidance, customer messaging, or executive updates
-- stakeholder-ready comms remain alongside the operational record
+- user describes an issue in the workspace
+- the system produces triage guidance, likely owners, and related dependency context
+- the workspace surfaces recommended next actions and helpful runbook guidance
+- stakeholder-ready messaging can be copied directly from the same flow
+- recent incidents and timeline context remain visible for follow-up
 
 ## Product Direction
 
-The current UI is intentionally more cinematic and operator-focused than a traditional dashboard. It draws from modern AI product marketing cues while staying usable as a working incident surface.
+The current frontend is intentionally simpler and more user-facing than the earlier operator-console direction. It is meant to feel like an AI help product that enterprise teams can actually understand and use during fast-moving issue response.
