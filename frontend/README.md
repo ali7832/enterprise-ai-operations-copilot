@@ -1,10 +1,14 @@
-# Enterprise AI Operations Copilot Frontend
+# SignalDesk AI Frontend
 
-React frontend for the enterprise AI guidance workspace.
+Premium SaaS-style product page and workspace for enterprise issue response.
 
-## What It Shows
+## What Changed
 
-This UI is framed as a user-facing enterprise AI tool instead of a dense operator cockpit. A user can describe a business or system issue in plain language, receive AI-assisted triage guidance, review likely owners and dependencies, and copy stakeholder-ready updates.
+- the top of the page now explains the product like a real end-user SaaS offering
+- developer-facing controls were removed from the main experience
+- the AI story is now outcome-based and user-facing
+- the live workspace sits lower on the page after the value proposition is clear
+- the workspace now calls the backend triage route and the backend assistant route to generate a richer response brief and follow-up answers
 
 ## Local Run
 
@@ -15,8 +19,4 @@ npm run dev
 
 The dev server runs on `http://127.0.0.1:4173` and proxies backend routes to `http://127.0.0.1:8000`.
 
-If you want to point the frontend at another backend, use the API Base field inside the UI.
-
-## Demo Behavior
-
-If the backend is unavailable, the frontend falls back to demo data so the product still walks through the same interview-ready flow.
+For the managed AI follow-up experience to use a live model, the backend must expose `/api/v1/copilot/assistant` with valid provider configuration. If that route is unavailable, the UI falls back to the structured triage output.
