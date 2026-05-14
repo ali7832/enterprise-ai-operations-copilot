@@ -14,4 +14,6 @@ htmlcov/
 opensearch-data/
 postgres-data/
 redis-data/
-
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
