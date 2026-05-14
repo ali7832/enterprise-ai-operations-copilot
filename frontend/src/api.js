@@ -4,12 +4,51 @@ const JSON_HEADERS = {
   "Content-Type": "application/json"
 };
 
+const ASSISTANT_STORAGE_KEY = "eaoc-assistant-config";
+
+const DEFAULT_ASSISTANT_CONFIG = {
+  providerLabel: "OpenAI-compatible",
+  apiBaseUrl: "",
+  apiKey: "",
+  model: "",
+  systemPrompt:
+    "You are an enterprise incident copilot. Keep answers clear, operator-friendly, and grounded in the incident context.",
+  temperature: 0.2,
+  maxTokens: 700
+};
+
 export function getApiBase() {
   return localStorage.getItem("eaoc-api-base") || "";
 }
 
 export function setApiBase(value) {
   localStorage.setItem("eaoc-api-base", value);
+}
+
+export function getAssistantConfig() {
+  const saved = localStorage.getItem(ASSISTANT_STORAGE_KEY);
+  if (!saved) {
+    return DEFAULT_ASSISTANT_CONFIG;
+  }
+
+  try {
+    return {
+      ...DEFAULT_ASSISTANT_CONFIG,
+      ...JSON.parse(saved)
+    };
+  } catch {
+    return DEFAULT_ASSISTANT_CONFIG;
+  }
+}
+
+export function setAssistantConfig(config) {
+  localStorage.setItem(
+    ASSISTANT_STORAGE_KEY,
+    JSON.stringify({
+      ...DEFAULT_ASSISTANT_CONFIG,
+      ...config
+    })
+  );
 }
 
 async function request(path, options = {}) {
@@ -67,6 +106,31 @@ export async function runTriage(payload) {
   });
 }
 
+export async function runAssistant({
+  messages,
+  incidentContext,
+  triageContext,
+  config
+}) {
+  const payload = {
+    messages,
+    incident_context: incidentContext || {},
+    triage_context: triageContext || {},
+    provider_label: config.providerLabel,
+    api_base_url: config.apiBaseUrl,
+    api_key: config.apiKey,
+    model: config.model,
+    system_prompt: config.systemPrompt,
+    temperature: Number(config.temperature || DEFAULT_ASSISTANT_CONFIG.temperature),
+    max_tokens: Number(config.maxTokens || DEFAULT_ASSISTANT_CONFIG.maxTokens)
+  };
+
+  return request("/api/v1/copilot/assistant", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function demoSnapshot() {
   return {
     liveMode: false,
@@ -87,4 +151,4 @@ export function demoSnapshot() {
   };
 }
 
-export { demoIncident, demoTriage };
+export { DEFAULT_ASSISTANT_CONFIG, demoIncident, demoTriage };
