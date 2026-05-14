@@ -1,4 +1,4 @@
-import React, { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import React, { startTransition, useEffect, useMemo, useState } from "react";
 import {
   demoIncident,
   demoSnapshot,
@@ -8,24 +8,9 @@ import {
   loadIncidents,
   loadTimeline,
   runTriage,
-  searchRunbooks,
   setApiBase
 } from "./api";
 import { demoPayload } from "./demoData";
-
-const NAV_ITEMS = [
-  { id: "overview", label: "Overview" },
-  { id: "triage", label: "Live Triage" },
-  { id: "incidents", label: "Incident Registry" },
-  { id: "runbooks", label: "Runbook Intel" }
-];
-
-const VIEW_TITLES = {
-  overview: "Operations Overview",
-  triage: "Live Triage Workspace",
-  incidents: "Incident Registry",
-  runbooks: "Runbook Intelligence"
-};
 
 function buildInitialForm() {
   return {
@@ -91,9 +76,9 @@ function severityClass(severity) {
   return `severity-pill severity-${severity || "SEV2"}`;
 }
 
-function StatCard({ label, value }) {
+function SummaryStat({ label, value, tone = "default" }) {
   return (
-    <article className="metric">
+    <article className={`summary-stat summary-stat-${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </article>
@@ -101,21 +86,17 @@ function StatCard({ label, value }) {
 }
 
 function App() {
-  const [activeView, setActiveView] = useState("overview");
   const [apiBase, setApiBaseState] = useState(getApiBase());
   const [apiBaseInput, setApiBaseInput] = useState(getApiBase());
   const [liveMode, setLiveMode] = useState(false);
   const [health, setHealth] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [timeline, setTimeline] = useState([]);
-  const [runbooks, setRunbooks] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(null);
   const [triageResult, setTriageResult] = useState(null);
   const [triageMode, setTriageMode] = useState("waiting");
   const [form, setForm] = useState(buildInitialForm);
   const [searchText, setSearchText] = useState("");
-  const [runbookQuery, setRunbookQuery] = useState({ service_name: "payments-api", severity: "SEV2" });
-  const deferredSearch = useDeferredValue(searchText);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,7 +106,6 @@ function App() {
         const nextHealth = await loadHealth();
         const nextIncidents = await loadIncidents();
         const nextTimeline = await loadTimeline(nextIncidents[0]?.incident_id);
-        const nextRunbooks = await searchRunbooks("payments-api", "SEV2");
 
         if (cancelled) {
           return;
@@ -137,7 +117,6 @@ function App() {
           setIncidents(nextIncidents);
           setSelectedIncidentId(nextIncidents[0]?.incident_id || null);
           setTimeline(nextTimeline);
-          setRunbooks(nextRunbooks);
         });
       } catch {
         if (cancelled) {
@@ -150,7 +129,6 @@ function App() {
           setIncidents(snapshot.incidents);
           setSelectedIncidentId(snapshot.incidents[0]?.incident_id || null);
           setTimeline(snapshot.timeline);
-          setRunbooks(snapshot.runbooks);
         });
       }
     }
@@ -163,10 +141,12 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+
     async function hydrateTimeline() {
       if (!selectedIncidentId || !liveMode) {
         return;
       }
+
       try {
         const items = await loadTimeline(selectedIncidentId);
         if (!cancelled) {
@@ -178,6 +158,7 @@ function App() {
         }
       }
     }
+
     hydrateTimeline();
     return () => {
       cancelled = true;
@@ -185,48 +166,43 @@ function App() {
   }, [selectedIncidentId, liveMode]);
 
   const filteredIncidents = useMemo(() => {
-    const query = deferredSearch.trim().toLowerCase();
+    const query = searchText.trim().toLowerCase();
     if (!query) {
       return incidents;
     }
-    return incidents.filter((incident) => {
-      const haystack = [
-        incident.title,
-        incident.service_name,
-        incident.severity,
-        incident.reporter,
-        incident.impact_summary
-      ]
+
+    return incidents.filter((incident) =>
+      [incident.title, incident.service_name, incident.severity, incident.reporter, incident.impact_summary]
         .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [deferredSearch, incidents]);
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [incidents, searchText]);
 
   const selectedIncident =
     incidents.find((incident) => incident.incident_id === selectedIncidentId) || incidents[0] || demoIncident;
 
-  const metrics = {
-    backend: liveMode ? "Connected" : "Demo fallback",
-    incidents: filteredIncidents.length,
-    runbooks: runbooks.length,
-    backendCombo: `${health?.backend_summary?.storage || "demo"} / ${health?.backend_summary?.cache || "disabled"}`
-  };
-
-  function refreshAll() {
-    const nextBase = apiBaseInput.trim();
-    setApiBase(nextBase);
-    setApiBaseState(nextBase);
-  }
+  const activeResult = triageResult || demoTriage;
+  const likelyOwners = activeResult.enriched_context?.likely_owners || [];
+  const dependencies = activeResult.enriched_context?.dependencies || [];
+  const stakeholderUpdates = activeResult.stakeholder_updates || [];
+  const recentIncidents = filteredIncidents.length ? filteredIncidents : [demoIncident];
 
   function updateForm(event) {
     const { name, value } = event.target;
     setForm((current) => ({ ...current, [name]: value }));
   }
 
+  function applyApiBase() {
+    const nextBase = apiBaseInput.trim();
+    setApiBase(nextBase);
+    setApiBaseState(nextBase);
+  }
+
   async function handleTriageSubmit(event) {
     event.preventDefault();
     const payload = toPayload(form);
+
     try {
       const result = await runTriage(payload);
       startTransition(() => {
@@ -243,392 +219,357 @@ function App() {
     }
   }
 
-  async function handleRunbookSearch(event) {
-    event.preventDefault();
-    try {
-      const items = await searchRunbooks(runbookQuery.service_name, runbookQuery.severity);
-      setRunbooks(items);
-    } catch {
-      setRunbooks(demoTriage.runbooks);
-    }
-  }
-
   return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-mark">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div>
-            <p className="eyebrow">Zones Program</p>
-            <h1>Enterprise AI Operations Copilot</h1>
-          </div>
+    <div className="app-shell">
+      <aside className="left-rail">
+        <div className="product-lockup">
+          <p className="mini-label">AI-Assisted Enterprise Response System</p>
+          <h1>Enterprise AI Operations Copilot</h1>
+          <p className="support-copy">
+            A simpler operator workspace focused on what the AI actually does: summarize the issue,
+            retrieve relevant guidance, suggest next steps, and draft communications.
+          </p>
         </div>
 
-        <nav className="nav-cluster" aria-label="Primary">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-link ${activeView === item.id ? "active" : ""}`}
-              onClick={() => setActiveView(item.id)}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <section className="sidebar-section">
-          <p className="section-label">Runtime</p>
-          <div className="status-stack">
-            <div className="status-item"><span>Status</span><strong>{liveMode ? "Live API" : "Demo mode"}</strong></div>
-            <div className="status-item"><span>Storage</span><strong>{health?.backend_summary?.storage || "demo"}</strong></div>
-            <div className="status-item"><span>Runbooks</span><strong>{health?.backend_summary?.runbooks || "fixtures"}</strong></div>
-            <div className="status-item"><span>Cache</span><strong>{health?.backend_summary?.cache || "disabled"}</strong></div>
+        <section className="rail-section">
+          <p className="mini-label">AI Role</p>
+          <div className="capability-list">
+            <div className="capability-item">
+              <strong>1. Understand the incident</strong>
+              <span>Turn raw input into a structured operational record.</span>
+            </div>
+            <div className="capability-item">
+              <strong>2. Assist triage</strong>
+              <span>Retrieve context, runbooks, dependencies, and likely owners.</span>
+            </div>
+            <div className="capability-item">
+              <strong>3. Draft action output</strong>
+              <span>Create next steps and stakeholder-ready updates for human review.</span>
+            </div>
           </div>
         </section>
 
-        <section className="sidebar-section">
-          <p className="section-label">Signal</p>
-          <div className="signal-tower">
-            <div className="signal-band"><span>Queue Pressure</span><strong>{String(filteredIncidents.length).padStart(2, "0")}</strong></div>
-            <div className="signal-band"><span>Escalations</span><strong>{String((triageResult?.escalation_targets || []).length).padStart(2, "0")}</strong></div>
-            <div className="signal-band"><span>Operator Mode</span><strong>{liveMode ? "LIVE" : "DEMO"}</strong></div>
+        <section className="rail-section">
+          <p className="mini-label">System State</p>
+          <div className="state-list">
+            <div className="state-row">
+              <span>Mode</span>
+              <strong>{liveMode ? "Live API" : "Demo fallback"}</strong>
+            </div>
+            <div className="state-row">
+              <span>Storage</span>
+              <strong>{health?.backend_summary?.storage || "demo"}</strong>
+            </div>
+            <div className="state-row">
+              <span>Runbooks</span>
+              <strong>{health?.backend_summary?.runbooks || "fixtures"}</strong>
+            </div>
+            <div className="state-row">
+              <span>Cache</span>
+              <strong>{health?.backend_summary?.cache || "disabled"}</strong>
+            </div>
           </div>
+        </section>
+
+        <section className="rail-section">
+          <p className="mini-label">Connection</p>
+          <label className="field-stack">
+            <span>API Base</span>
+            <input
+              type="text"
+              value={apiBaseInput}
+              onChange={(event) => setApiBaseInput(event.target.value)}
+              placeholder="Leave blank to use the Vite proxy"
+            />
+          </label>
+          <button className="secondary-button" onClick={applyApiBase} type="button">
+            Apply Connection
+          </button>
         </section>
       </aside>
 
-      <main className="workspace">
-        <header className="topbar">
-          <div className="topbar-copy">
-            <p className="eyebrow">Command Surface</p>
-            <h2>{VIEW_TITLES[activeView]}</h2>
+      <main className="main-workspace">
+        <header className="top-frame">
+          <div>
+            <p className="mini-label">Guided Workflow</p>
+            <h2>Input incident, review AI output, then take action.</h2>
           </div>
-          <div className="topbar-actions">
-            <label className="endpoint-switch">
-              <span>API Base</span>
-              <input
-                type="text"
-                value={apiBaseInput}
-                onChange={(event) => setApiBaseInput(event.target.value)}
-                placeholder="Leave blank to use the Vite proxy"
-              />
-            </label>
-            <button className="utility-button" onClick={refreshAll} type="button">Refresh Surface</button>
+          <div className="workflow-steps">
+            <div className="workflow-step active">Incident Brief</div>
+            <div className="workflow-step active">AI Analysis</div>
+            <div className="workflow-step active">Action Center</div>
           </div>
         </header>
 
-        <section className="hero-grid">
-          <div className="hero-copy">
-            <p className="eyebrow">Incident Intelligence</p>
-            <h3>A command-grade UI for triage, escalation, and stakeholder coordination.</h3>
-            <p className="hero-text">
-              This frontend turns the working backend into a real enterprise surface. It is built for
-              operators who need signal density, fast actions, and an interface that feels like an internal
-              product, not a demo page.
-            </p>
-          </div>
-          <div className="hero-visual">
-            <div className="orbital-frame">
-              <div className="scan-ring scan-ring-one" />
-              <div className="scan-ring scan-ring-two" />
-              <div className="scan-sweep" />
-              <div className="radar-core"><span>Ops</span></div>
-              <div className="beacon beacon-a" />
-              <div className="beacon beacon-b" />
-              <div className="beacon beacon-c" />
-            </div>
-          </div>
+        <section className="summary-band">
+          <SummaryStat label="Backend" value={liveMode ? "Connected" : "Demo"} tone="accent" />
+          <SummaryStat label="Tracked incidents" value={recentIncidents.length} />
+          <SummaryStat
+            label="Likely owners surfaced"
+            value={likelyOwners.length || "0"}
+            tone="cool"
+          />
+          <SummaryStat
+            label="Stakeholder drafts"
+            value={stakeholderUpdates.length || "0"}
+            tone="warm"
+          />
         </section>
 
-        <section className="metrics-band">
-          <StatCard label="Backend State" value={metrics.backend} />
-          <StatCard label="Tracked Incidents" value={metrics.incidents} />
-          <StatCard label="Runbook Matches" value={metrics.runbooks} />
-          <StatCard label="Cache / Storage" value={metrics.backendCombo} />
+        <section className="workspace-grid">
+          <section className="surface surface-primary">
+            <div className="surface-header">
+              <div>
+                <p className="mini-label">Step 1</p>
+                <h3>Incident Brief</h3>
+              </div>
+              <button className="secondary-button" onClick={() => setForm(buildInitialForm())} type="button">
+                Load Example
+              </button>
+            </div>
+
+            <form className="incident-form" onSubmit={handleTriageSubmit}>
+              <div className="field-grid">
+                <label className="field-stack">
+                  <span>Title</span>
+                  <input name="title" value={form.title} onChange={updateForm} required />
+                </label>
+                <label className="field-stack">
+                  <span>Service</span>
+                  <input name="service_name" value={form.service_name} onChange={updateForm} required />
+                </label>
+                <label className="field-stack">
+                  <span>Environment</span>
+                  <input name="environment" value={form.environment} onChange={updateForm} required />
+                </label>
+                <label className="field-stack">
+                  <span>Reporter</span>
+                  <input name="reporter" value={form.reporter} onChange={updateForm} required />
+                </label>
+                <label className="field-stack">
+                  <span>Severity</span>
+                  <select name="severity" value={form.severity} onChange={updateForm}>
+                    <option value="SEV1">SEV1</option>
+                    <option value="SEV2">SEV2</option>
+                    <option value="SEV3">SEV3</option>
+                    <option value="SEV4">SEV4</option>
+                  </select>
+                </label>
+                <label className="field-stack">
+                  <span>Affected Regions</span>
+                  <input name="affected_regions" value={form.affected_regions} onChange={updateForm} required />
+                </label>
+              </div>
+
+              <label className="field-stack">
+                <span>Impact Summary</span>
+                <textarea
+                  name="impact_summary"
+                  rows="3"
+                  value={form.impact_summary}
+                  onChange={updateForm}
+                  required
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>Description</span>
+                <textarea
+                  name="description"
+                  rows="4"
+                  value={form.description}
+                  onChange={updateForm}
+                  required
+                />
+              </label>
+
+              <label className="field-stack">
+                <span>Tags</span>
+                <input name="tags" value={form.tags} onChange={updateForm} required />
+              </label>
+
+              <div className="button-row">
+                <button className="primary-button" type="submit">
+                  Run AI Analysis
+                </button>
+                <div className="run-state">
+                  <span>Status</span>
+                  <strong>{triageMode === "waiting" ? "Ready" : `${triageMode.toUpperCase()} result`}</strong>
+                </div>
+              </div>
+            </form>
+          </section>
+
+          <section className="surface surface-primary">
+            <div className="surface-header">
+              <div>
+                <p className="mini-label">Step 2</p>
+                <h3>AI Analysis</h3>
+              </div>
+              <span className={`mode-pill ${liveMode ? "mode-live" : "mode-demo"}`}>
+                {liveMode ? "Live backend" : "Demo mode"}
+              </span>
+            </div>
+
+            <div className="analysis-stack">
+              <article className="analysis-card analysis-highlight">
+                <p className="mini-label">AI Incident Summary</p>
+                <div className="headline-row">
+                  <span className={severityClass(activeResult.severity)}>{activeResult.severity}</span>
+                  <strong>{activeResult.incident_summary}</strong>
+                </div>
+              </article>
+
+              <div className="analysis-grid">
+                <article className="analysis-card">
+                  <p className="mini-label">AI Context</p>
+                  <h4>{activeResult.enriched_context?.affected_capability}</h4>
+                  <p>{activeResult.enriched_context?.blast_radius}</p>
+                </article>
+                <article className="analysis-card">
+                  <p className="mini-label">Why AI surfaced these owners</p>
+                  <ul className="clean-list">
+                    {likelyOwners.map((owner) => (
+                      <li key={owner}>{owner}</li>
+                    ))}
+                  </ul>
+                </article>
+              </div>
+
+              <article className="analysis-card">
+                <p className="mini-label">AI Suggested Next Steps</p>
+                <ul className="clean-list">
+                  {activeResult.action_plan?.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="analysis-card">
+                <p className="mini-label">Retrieved Dependencies</p>
+                <div className="dependency-tags">
+                  {dependencies.map((dependency) => (
+                    <span key={`${dependency.dependency_name}-${dependency.criticality}`} className="dependency-tag">
+                      {dependency.dependency_name} • {dependency.criticality}
+                    </span>
+                  ))}
+                </div>
+              </article>
+            </div>
+          </section>
         </section>
 
-        {activeView === "overview" && (
-          <section className="view">
-            <div className="three-column">
-              <section className="panel panel-emphasis">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Current Situation</p>
-                    <h3>Operational loadout</h3>
-                  </div>
-                  <span className="panel-chip">{liveMode ? "Healthy" : "Fallback"}</span>
-                </div>
-                <div className="situation-grid">
-                  <div className="situation-block"><span>Environment</span><strong>{health?.environment || "demo"}</strong></div>
-                  <div className="situation-block"><span>LangGraph</span><strong>{health?.langgraph_enabled ? "Enabled" : "Deterministic"}</strong></div>
-                  <div className="situation-block"><span>Storage</span><strong>{health?.backend_summary?.storage || "demo"}</strong></div>
-                  <div className="situation-block"><span>Runbooks</span><strong>{health?.backend_summary?.runbooks || "fixtures"}</strong></div>
-                </div>
-                <div className="dependency-canvas">
-                  <div className="dependency-node center-node">Copilot</div>
-                  <div className="dependency-node node-a">Runbooks</div>
-                  <div className="dependency-node node-b">Timeline</div>
-                  <div className="dependency-node node-c">Stakeholders</div>
-                  <div className="dependency-node node-d">Metrics</div>
-                </div>
-              </section>
+        <section className="lower-grid">
+          <section className="surface">
+            <div className="surface-header">
+              <div>
+                <p className="mini-label">Step 3</p>
+                <h3>Action Center</h3>
+              </div>
+            </div>
 
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Recent Incidents</p>
-                    <h3>Registry snapshot</h3>
-                  </div>
-                </div>
-                <div className="list-stack">
-                  {filteredIncidents.slice(0, 4).map((incident) => (
-                    <div className="list-card" key={incident.incident_id}>
-                      <strong>{incident.title}</strong>
-                      <p><span className={severityClass(incident.severity)}>{incident.severity}</span> {incident.service_name} • {incident.environment}</p>
-                      <p>{incident.impact_summary}</p>
+            <div className="action-grid">
+              <article className="analysis-card">
+                <p className="mini-label">Stakeholder Drafts</p>
+                <div className="stack-tight">
+                  {stakeholderUpdates.map((update) => (
+                    <div className="message-card" key={`${update.audience}-${update.delivery_channel}`}>
+                      <strong>
+                        {update.audience} • {update.delivery_channel}
+                      </strong>
+                      <p>{update.title}</p>
+                      <p>{update.body}</p>
                     </div>
                   ))}
                 </div>
-              </section>
+              </article>
 
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Timeline Pulse</p>
-                    <h3>Live response rhythm</h3>
-                  </div>
-                </div>
-                <div className="timeline-stack">
-                  {timeline.map((item, index) => (
-                    <div className="timeline-item" key={`${item.event_type}-${index}`}>
-                      <strong>{item.event_type}</strong>
-                      <p>{item.summary || item.message}</p>
-                      <p>{item.actor} • {formatTime(item.created_at)}</p>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-          </section>
-        )}
-
-        {activeView === "triage" && (
-          <section className="view">
-            <div className="two-column">
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Incident Intake</p>
-                    <h3>Launch a triage run</h3>
-                  </div>
-                </div>
-                <form className="triage-form" onSubmit={handleTriageSubmit}>
-                  <div className="field-grid">
-                    <label><span>Title</span><input name="title" value={form.title} onChange={updateForm} required /></label>
-                    <label><span>Service Name</span><input name="service_name" value={form.service_name} onChange={updateForm} required /></label>
-                    <label><span>Environment</span><input name="environment" value={form.environment} onChange={updateForm} required /></label>
-                    <label><span>Reporter</span><input name="reporter" value={form.reporter} onChange={updateForm} required /></label>
-                    <label>
-                      <span>Severity</span>
-                      <select name="severity" value={form.severity} onChange={updateForm}>
-                        <option value="SEV1">SEV1</option>
-                        <option value="SEV2">SEV2</option>
-                        <option value="SEV3">SEV3</option>
-                        <option value="SEV4">SEV4</option>
-                      </select>
-                    </label>
-                    <label><span>Regions</span><input name="affected_regions" value={form.affected_regions} onChange={updateForm} required /></label>
-                  </div>
-                  <label className="full-width"><span>Impact Summary</span><textarea name="impact_summary" rows="4" value={form.impact_summary} onChange={updateForm} required /></label>
-                  <label className="full-width"><span>Description</span><textarea name="description" rows="5" value={form.description} onChange={updateForm} required /></label>
-                  <label className="full-width"><span>Tags</span><input name="tags" value={form.tags} onChange={updateForm} required /></label>
-                  <div className="form-actions">
-                    <button className="primary-button" type="submit">Run Copilot Triage</button>
-                    <button className="utility-button" onClick={() => setForm(buildInitialForm())} type="button">Load Demo Pattern</button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Copilot Output</p>
-                    <h3>Triage intelligence</h3>
-                  </div>
-                  <span className="panel-chip">{triageMode === "waiting" ? "Waiting" : `${triageMode.toUpperCase()} result`}</span>
-                </div>
-
-                {!triageResult && <div className="empty-state">Run the copilot to generate an action plan, stakeholder updates, and dependency context.</div>}
-
-                {triageResult && (
-                  <div className="results-stack">
-                    <div className="result-section">
-                      <h4>Incident Summary</h4>
-                      <p><span className={severityClass(triageResult.severity)}>{triageResult.severity}</span> {triageResult.incident_summary}</p>
-                    </div>
-                    <div className="result-grid">
-                      <div className="result-section">
-                        <h4>Action Plan</h4>
-                        <ul>{triageResult.action_plan?.map((item) => <li key={item}>{item}</li>)}</ul>
-                      </div>
-                      <div className="result-section">
-                        <h4>Escalation Targets</h4>
-                        <ul>{triageResult.escalation_targets?.map((item) => <li key={item}>{item}</li>)}</ul>
-                      </div>
-                    </div>
-                    <div className="result-grid">
-                      <div className="result-section">
-                        <h4>Enriched Context</h4>
-                        <p><strong>Capability</strong><br />{triageResult.enriched_context?.affected_capability}</p>
-                        <p><strong>Blast Radius</strong><br />{triageResult.enriched_context?.blast_radius}</p>
-                        <p><strong>Likely Owners</strong><br />{triageResult.enriched_context?.likely_owners?.join(", ")}</p>
-                      </div>
-                      <div className="result-section">
-                        <h4>Dependency Surface</h4>
-                        <ul>
-                          {triageResult.enriched_context?.dependencies?.map((item) => (
-                            <li key={`${item.dependency_name}-${item.criticality}`}>{item.dependency_name} • {item.dependency_type} • {item.criticality}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                    <div className="result-section">
-                      <h4>Leadership Update</h4>
-                      <p>{triageResult.leadership_update}</p>
-                    </div>
-                    <div className="result-section">
-                      <h4>Stakeholder Updates</h4>
-                      {triageResult.stakeholder_updates?.map((update) => (
-                        <div className="status-note" key={`${update.audience}-${update.delivery_channel}`}>
-                          <strong>{update.audience} • {update.delivery_channel}</strong>
-                          <p>{update.title}</p>
-                          <p>{update.body}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </section>
-            </div>
-          </section>
-        )}
-
-        {activeView === "incidents" && (
-          <section className="view">
-            <div className="two-column">
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Incident Registry</p>
-                    <h3>All tracked incidents</h3>
-                  </div>
-                </div>
-                <div className="search-bar">
-                  <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search title, service, severity, or reporter" />
-                </div>
-                <div className="registry-table">
-                  {filteredIncidents.map((incident) => (
-                    <button
-                      className={`row ${selectedIncidentId === incident.incident_id ? "active" : ""}`}
-                      key={incident.incident_id}
-                      onClick={() => setSelectedIncidentId(incident.incident_id)}
-                      type="button"
-                    >
-                      <strong>{incident.title}</strong>
-                      <span><span className={severityClass(incident.severity)}>{incident.severity}</span> {incident.service_name} • {incident.reporter}</span>
-                      <span>{formatTime(incident.created_at)}</span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Focus Context</p>
-                    <h3>Selected incident detail</h3>
-                  </div>
-                </div>
-                <div className="inspector-panel">
-                  <div className="result-section">
-                    <h4>{selectedIncident.title}</h4>
-                    <p><span className={severityClass(selectedIncident.severity)}>{selectedIncident.severity}</span> {selectedIncident.service_name} • {selectedIncident.environment}</p>
-                    <p>{selectedIncident.description || selectedIncident.impact_summary}</p>
-                    <p><strong>Reporter</strong><br />{selectedIncident.reporter}</p>
-                    <p><strong>Dedupe Key</strong><br />{selectedIncident.dedupe_key}</p>
-                    <p><strong>Regions</strong><br />{selectedIncident.affected_regions?.join(", ")}</p>
-                    <p><strong>Tags</strong><br />{selectedIncident.tags?.join(", ")}</p>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </section>
-        )}
-
-        {activeView === "runbooks" && (
-          <section className="view">
-            <div className="two-column">
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Runbook Search</p>
-                    <h3>Operational guidance retrieval</h3>
-                  </div>
-                </div>
-                <form className="inline-form" onSubmit={handleRunbookSearch}>
-                  <label>
-                    <span>Service</span>
-                    <input
-                      value={runbookQuery.service_name}
-                      onChange={(event) => setRunbookQuery((current) => ({ ...current, service_name: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    <span>Severity</span>
-                    <input
-                      value={runbookQuery.severity}
-                      onChange={(event) => setRunbookQuery((current) => ({ ...current, severity: event.target.value }))}
-                    />
-                  </label>
-                  <button className="primary-button" type="submit">Search Runbooks</button>
-                </form>
-                <div className="results-stack">
-                  {runbooks.map((runbook) => (
-                    <div className="runbook-card" key={runbook.runbook_id}>
+              <article className="analysis-card">
+                <p className="mini-label">Runbook Guidance</p>
+                <div className="stack-tight">
+                  {activeResult.runbooks?.map((runbook) => (
+                    <div className="message-card" key={runbook.runbook_id}>
                       <strong>{runbook.title}</strong>
                       <p>{runbook.summary}</p>
-                      <p><strong>Actions</strong><br />{runbook.immediate_actions?.join(" • ")}</p>
-                      <p><strong>Escalations</strong><br />{runbook.escalation_targets?.join(", ")}</p>
+                      <p>{runbook.immediate_actions?.join(" • ")}</p>
                     </div>
                   ))}
                 </div>
-              </section>
-
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="section-label">Operating Notes</p>
-                    <h3>Why this frontend feels real</h3>
-                  </div>
-                </div>
-                <div className="narrative-block">
-                  <p>
-                    This is designed like an internal command product: dense signal, quiet chrome, controlled
-                    animation, and fast operator loops across triage, registry, and communications.
-                  </p>
-                  <p>
-                    The app supports live API mode when your FastAPI backend is running and a demo fallback when
-                    the API is unavailable, so it remains usable during interviews, product walkthroughs, and staged demos.
-                  </p>
-                </div>
-              </section>
+              </article>
             </div>
           </section>
-        )}
+
+          <section className="surface">
+            <div className="surface-header">
+              <div>
+                <p className="mini-label">Incident Memory</p>
+                <h3>Recent incidents and activity</h3>
+              </div>
+            </div>
+
+            <div className="field-stack search-field">
+              <span>Search incidents</span>
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search title, service, severity, or reporter"
+              />
+            </div>
+
+            <div className="incident-memory-grid">
+              <div className="incident-list">
+                {recentIncidents.map((incident) => (
+                  <button
+                    key={incident.incident_id}
+                    className={`incident-item ${selectedIncidentId === incident.incident_id ? "selected" : ""}`}
+                    onClick={() => setSelectedIncidentId(incident.incident_id)}
+                    type="button"
+                  >
+                    <strong>{incident.title}</strong>
+                    <span>
+                      <span className={severityClass(incident.severity)}>{incident.severity}</span>{" "}
+                      {incident.service_name}
+                    </span>
+                    <span>{formatTime(incident.created_at)}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="detail-column">
+                <article className="analysis-card">
+                  <p className="mini-label">Selected incident</p>
+                  <h4>{selectedIncident.title}</h4>
+                  <p>{selectedIncident.description || selectedIncident.impact_summary}</p>
+                  <div className="detail-pairs">
+                    <div>
+                      <span>Reporter</span>
+                      <strong>{selectedIncident.reporter}</strong>
+                    </div>
+                    <div>
+                      <span>Dedupe Key</span>
+                      <strong>{selectedIncident.dedupe_key}</strong>
+                    </div>
+                  </div>
+                </article>
+
+                <article className="analysis-card">
+                  <p className="mini-label">Response Timeline</p>
+                  <div className="timeline-list">
+                    {timeline.map((item, index) => (
+                      <div className="timeline-item" key={`${item.event_type}-${index}`}>
+                        <strong>{item.event_type}</strong>
+                        <p>{item.summary || item.message}</p>
+                        <span>
+                          {item.actor} • {formatTime(item.created_at)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+        </section>
       </main>
     </div>
   );
