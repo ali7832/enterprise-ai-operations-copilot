@@ -5,6 +5,14 @@ from pathlib import Path
 import os
 
 
+DEFAULT_AI_SYSTEM_PROMPT = (
+    "You are an enterprise incident copilot. Help operators understand the incident, "
+    "propose the next safest actions, draft concise stakeholder updates, and stay "
+    "grounded in the context you are given. If the context is incomplete, say what is "
+    "missing instead of inventing certainty."
+)
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = "local"
@@ -30,6 +38,12 @@ class Settings:
     aws_rds_instance: str = "enterprise-ai-ops-db"
     aws_opensearch_domain: str = "enterprise-ai-ops-search"
     aws_elasticache_cluster: str = "enterprise-ai-ops-cache"
+    ai_provider_label: str = "OpenAI-compatible"
+    ai_api_base_url: str = ""
+    ai_api_key: str = ""
+    ai_model: str = ""
+    ai_request_timeout_seconds: int = 45
+    ai_system_prompt: str = DEFAULT_AI_SYSTEM_PROMPT
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -57,6 +71,12 @@ class Settings:
             aws_rds_instance=os.getenv("AWS_RDS_INSTANCE", cls.aws_rds_instance),
             aws_opensearch_domain=os.getenv("AWS_OPENSEARCH_DOMAIN", cls.aws_opensearch_domain),
             aws_elasticache_cluster=os.getenv("AWS_ELASTICACHE_CLUSTER", cls.aws_elasticache_cluster),
+            ai_provider_label=os.getenv("AI_PROVIDER_LABEL", cls.ai_provider_label),
+            ai_api_base_url=os.getenv("AI_API_BASE_URL", cls.ai_api_base_url),
+            ai_api_key=os.getenv("AI_API_KEY", cls.ai_api_key),
+            ai_model=os.getenv("AI_MODEL", cls.ai_model),
+            ai_request_timeout_seconds=int(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", cls.ai_request_timeout_seconds)),
+            ai_system_prompt=os.getenv("AI_SYSTEM_PROMPT", cls.ai_system_prompt),
         )
 
     def fixture_path(self, relative_path: str) -> Path:
