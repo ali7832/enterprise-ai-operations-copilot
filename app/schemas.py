@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -63,6 +65,33 @@ class CopilotResponse(BaseModel):
     leadership_update: str
     stakeholder_updates: list[StakeholderUpdateResponse]
     execution_metadata: dict[str, str | int | float | bool]
+
+
+class AssistantMessageRequest(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantRequest(BaseModel):
+    messages: list[AssistantMessageRequest] = Field(default_factory=list)
+    incident_context: dict[str, Any] = Field(default_factory=dict)
+    triage_context: dict[str, Any] = Field(default_factory=dict)
+    provider_label: str = "OpenAI-compatible"
+    api_base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    system_prompt: str = ""
+    temperature: float = 0.2
+    max_tokens: int = 700
+
+
+class AssistantResponse(BaseModel):
+    answer: str
+    provider: str
+    model: str
+    used_live_model: bool
+    request_id: str | None = None
+    warning: str | None = None
 
 
 class HealthResponse(BaseModel):
