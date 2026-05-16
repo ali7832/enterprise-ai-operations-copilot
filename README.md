@@ -2,6 +2,12 @@
 
 Private, interview-focused enterprise application inspired by large-account operations environments. The current frontend direction presents the product as a premium SaaS-style enterprise response platform rather than an internal operator console.
 
+## Product Demo Video
+
+
+https://github.com/user-attachments/assets/393ba4b8-adf5-485f-839f-7de42826c277
+
+
 ## What This System Does
 
 Enterprise AI Operations Copilot helps teams:
